@@ -53,13 +53,15 @@ discover_sources() {
     # Source folders — convert backslashes to forward slashes
     if [[ -n "$CFG_SOURCE_FOLDERS" ]]; then
         local folders="${CFG_SOURCE_FOLDERS//\\//}"
+        shopt -s nullglob
         for dir in $folders; do
             for ext in cpp c; do
-                for f in "$dir"/*."$ext" 2>/dev/null; do
+                for f in "$dir"/*."$ext"; do
                     [[ -f "$f" ]] && ALL_SOURCES="$ALL_SOURCES $f"
                 done
             done
         done
+        shopt -u nullglob
     fi
 
     ALL_SOURCES="${ALL_SOURCES# }"  # trim leading space
