@@ -473,6 +473,50 @@ static float cam_distance(Camera* c, Vec3f p) {
     return vec3f_length(vec3f_sub(p, c->pos));
 }
 
+// ── View-space helpers (for near-plane clipping) ─────────────────────────────
+
+// Transform a world-space point into camera/view space (before projection).
+static Vec3f cam_to_view(Camera* c, Vec3f world_pos) {
+    float dx = world_pos.x - c->pos.x;
+    float dy = world_pos.y - c->pos.y;
+    float dz = world_pos.z - c->pos.z;
+
+    // Rotate by -yaw (Y-axis)
+    float tx =  dx * c->cos_yaw + dz * c->sin_yaw;
+    float tz = -dx * c->sin_yaw + dz * c->cos_yaw;
+    dx = tx;  dz = tz;
+
+    // Rotate by -pitch (X-axis)
+    float ty =  dy * c->cos_pitch + dz * c->sin_pitch;
+    tz       = -dy * c->sin_pitch + dz * c->cos_pitch;
+
+    return vec3f_make(dx, ty, tz);
+}
+
+// Project a view-space point to screen space (no near-plane clamping).
+static Vec3f cam_project_view(Camera* c, Vec3f vp) {
+    float dz = vp.z;
+    if (dz < 0.001f) dz = 0.001f;  // safety against div-by-zero
+
+    float half_w  = c->buf_w * 0.5f;
+    float half_h  = c->buf_h * 0.5f;
+    float fov_tan = tanf((c->fov * 0.5f) * (float)M_PI / 180.0f);
+    float scale   = c->zoom / fov_tan;
+
+    float sx =  (vp.x / dz) * half_w * scale * c->aspect_w + half_w;
+    float sy = -(vp.y / dz) * half_h * scale * c->aspect_h + half_h;
+
+    return vec3f_make(sx, sy, dz);
+}
+
+// Interpolate a UV coordinate
+static Vec2f lerp_uv(Vec2f a, Vec2f b, float t) {
+    Vec2f r;
+    r.u = a.u + (b.u - a.u) * t;
+    r.v = a.v + (b.v - a.v) * t;
+    return r;
+}
+
 void draw_dot(RDot d) {
     int cid = cam_get_active_id();
     Camera* c = cam_get(cid);
@@ -615,20 +659,105 @@ void draw_face(RFace f) {
         vec3f_add(vec3f_add(f.verts[0], f.verts[1]), f.verts[2]), 1.0f / 3.0f);
     if (cam_distance(c, center) > c->far_plane) return;
 
-    // Project all 3 vertices
-    Vec3f sp[3];
-    int visible = 0;
-    for (int i = 0; i < 3; i++) {
-        sp[i] = cam_project(cid, f.verts[i]);
-        if (sp[i].z >= c->near_plane) visible++;
-    }
-    if (visible == 0) return;
+    // Auto-update cache if dirty
+    if (c->cache_dirty) cam_update(cid);
 
-    rasterize_triangle(cid, c,
-        sp[0], sp[1], sp[2],
-        f.uvs[0], f.uvs[1], f.uvs[2],
-        f.texture, f.tex_w, f.tex_h,
-        f.color, f.ascii);
+    // Transform all 3 vertices to view (camera) space
+    Vec3f vs[3];
+    for (int i = 0; i < 3; i++)
+        vs[i] = cam_to_view(c, f.verts[i]);
+
+    // Classify vertices: in front of or behind the near plane
+    float np = c->near_plane;
+    int front_idx[3], back_idx[3];
+    int nfront = 0, nback = 0;
+    for (int i = 0; i < 3; i++) {
+        if (vs[i].z >= np)
+            front_idx[nfront++] = i;
+        else
+            back_idx[nback++] = i;
+    }
+
+    // All behind → discard
+    if (nfront == 0) return;
+
+    // All in front → no clipping needed
+    if (nfront == 3) {
+        Vec3f sp[3];
+        for (int i = 0; i < 3; i++)
+            sp[i] = cam_project_view(c, vs[i]);
+
+        rasterize_triangle(cid, c,
+            sp[0], sp[1], sp[2],
+            f.uvs[0], f.uvs[1], f.uvs[2],
+            f.texture, f.tex_w, f.tex_h,
+            f.color, f.ascii);
+        return;
+    }
+
+    // ── Near-plane clipping ──────────────────────────────────────────────
+    // Interpolate where an edge (from behind-vert A to front-vert B)
+    // crosses the near plane z = np.
+
+    if (nfront == 1) {
+        // 1 vertex in front, 2 behind → clip to 1 smaller triangle
+        int fi  = front_idx[0];
+        int bi0 = back_idx[0];
+        int bi1 = back_idx[1];
+
+        float t0 = (np - vs[bi0].z) / (vs[fi].z - vs[bi0].z);
+        float t1 = (np - vs[bi1].z) / (vs[fi].z - vs[bi1].z);
+
+        Vec3f c0 = vec3f_add(vs[bi0], vec3f_scale(vec3f_sub(vs[fi], vs[bi0]), t0));
+        Vec3f c1 = vec3f_add(vs[bi1], vec3f_scale(vec3f_sub(vs[fi], vs[bi1]), t1));
+
+        Vec2f uv_c0 = lerp_uv(f.uvs[bi0], f.uvs[fi], t0);
+        Vec2f uv_c1 = lerp_uv(f.uvs[bi1], f.uvs[fi], t1);
+
+        Vec3f sp_f  = cam_project_view(c, vs[fi]);
+        Vec3f sp_c0 = cam_project_view(c, c0);
+        Vec3f sp_c1 = cam_project_view(c, c1);
+
+        rasterize_triangle(cid, c,
+            sp_f, sp_c0, sp_c1,
+            f.uvs[fi], uv_c0, uv_c1,
+            f.texture, f.tex_w, f.tex_h,
+            f.color, f.ascii);
+    }
+    else {  // nfront == 2
+        // 2 vertices in front, 1 behind → clip to 2 triangles (a quad)
+        int fi0 = front_idx[0];
+        int fi1 = front_idx[1];
+        int bi  = back_idx[0];
+
+        float t0 = (np - vs[bi].z) / (vs[fi0].z - vs[bi].z);
+        float t1 = (np - vs[bi].z) / (vs[fi1].z - vs[bi].z);
+
+        Vec3f c0 = vec3f_add(vs[bi], vec3f_scale(vec3f_sub(vs[fi0], vs[bi]), t0));
+        Vec3f c1 = vec3f_add(vs[bi], vec3f_scale(vec3f_sub(vs[fi1], vs[bi]), t1));
+
+        Vec2f uv_c0 = lerp_uv(f.uvs[bi], f.uvs[fi0], t0);
+        Vec2f uv_c1 = lerp_uv(f.uvs[bi], f.uvs[fi1], t1);
+
+        Vec3f sp_f0 = cam_project_view(c, vs[fi0]);
+        Vec3f sp_f1 = cam_project_view(c, vs[fi1]);
+        Vec3f sp_c0 = cam_project_view(c, c0);
+        Vec3f sp_c1 = cam_project_view(c, c1);
+
+        // Triangle 1: fi0, fi1, clip0
+        rasterize_triangle(cid, c,
+            sp_f0, sp_f1, sp_c0,
+            f.uvs[fi0], f.uvs[fi1], uv_c0,
+            f.texture, f.tex_w, f.tex_h,
+            f.color, f.ascii);
+
+        // Triangle 2: fi1, clip1, clip0
+        rasterize_triangle(cid, c,
+            sp_f1, sp_c1, sp_c0,
+            f.uvs[fi1], uv_c1, uv_c0,
+            f.texture, f.tex_w, f.tex_h,
+            f.color, f.ascii);
+    }
 }
 
 // ─── Render Output ───────────────────────────────────────────────────────────

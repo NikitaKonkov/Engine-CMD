@@ -215,7 +215,7 @@ int main() {
     }
 
     // ── Loop ─────────────────────────────────────────────────────────────────
-    int clk = clock_create(144, "demo");
+    int clk = clock_create(60, "demo");
 
     // Flying camera state
     float cam_x = 0.0f, cam_y = 12.0f, cam_z = 45.0f;
@@ -256,7 +256,7 @@ int main() {
             int dx = mx - MOUSE_CENTER_X;
             int dy = my - MOUSE_CENTER_Y;
             if (dx || dy) {
-                cam_yaw   += dx * MOUSE_SENS;
+                cam_yaw   -= dx * MOUSE_SENS;
                 cam_pitch += dy * MOUSE_SENS;
                 // Clamp pitch to ~85 degrees
                 if (cam_pitch >  1.5f) cam_pitch =  1.5f;

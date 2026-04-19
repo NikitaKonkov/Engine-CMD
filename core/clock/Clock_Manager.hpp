@@ -60,7 +60,7 @@ int  clock_sync(int clock_id);
 
 // ─── API: Control ─────────────────────────────────────────────────────────────
 
-// Change target FPS at runtime.
+// Change target FPS at runtime. <3
 void clock_set_fps(int clock_id, double fps);
 
 // Reset all counters (frames, uptime, averages) without destroying.
