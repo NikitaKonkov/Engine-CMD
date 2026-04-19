@@ -110,12 +110,12 @@ static void build_solid_cube(float cx, float cy, float cz, float s,
         vec3f_make(cx+hs, cy+hs, cz+hs), // 6 right-top-back
         vec3f_make(cx-hs, cy+hs, cz+hs), // 7 left-top-back
     };
-    rface_make_quad(v[4], v[5], v[6], v[7], color, '#', faces +  0); // +Z front
-    rface_make_quad(v[1], v[0], v[3], v[2], color, '#', faces +  2); // -Z back
-    rface_make_quad(v[0], v[4], v[7], v[3], color, '#', faces +  4); // -X left
-    rface_make_quad(v[5], v[1], v[2], v[6], color, '#', faces +  6); // +X right
-    rface_make_quad(v[3], v[7], v[6], v[2], color, '#', faces +  8); // +Y top
-    rface_make_quad(v[0], v[1], v[5], v[4], color, '#', faces + 10); // -Y bottom
+    rface_make_quad(v[4], v[5], v[6], v[7], 36, 'A', faces +  0); // +Z front
+    rface_make_quad(v[1], v[0], v[3], v[2], 31, 'B', faces +  2); // -Z back
+    rface_make_quad(v[0], v[4], v[7], v[3], 32, 'C', faces +  4); // -X left
+    rface_make_quad(v[5], v[1], v[2], v[6], 33, 'D', faces +  6); // +X right
+    rface_make_quad(v[3], v[7], v[6], v[2], 34, 'E', faces +  8); // +Y top
+    rface_make_quad(v[0], v[1], v[5], v[4], 35, 'F', faces + 10); // -Y bottom
 }
 
 // Sphere as a dot cloud on the surface
@@ -135,6 +135,47 @@ static int build_sphere_dots(float cx, float cy, float cz, float r,
         }
     }
     return idx;
+}
+
+// ─── Gaussian splat helpers ──────────────────────────────────────────────────
+
+// Box-Muller transform: returns a Gaussian-distributed float (mean, stddev)
+static float gauss_rand(float mean, float stddev) {
+    static int   spare_ready = 0;
+    static float spare_val   = 0.0f;
+    if (spare_ready) { spare_ready = 0; return mean + stddev * spare_val; }
+    float u, v, s;
+    do {
+        u = (float)rand() / (float)RAND_MAX * 2.0f - 1.0f;
+        v = (float)rand() / (float)RAND_MAX * 2.0f - 1.0f;
+        s = u*u + v*v;
+    } while (s >= 1.0f || s == 0.0f);
+    float mul  = sqrtf(-2.0f * logf(s) / s);
+    spare_val  = v * mul;
+    spare_ready = 1;
+    return mean + stddev * u * mul;
+}
+
+// Build a Gaussian splat as a cloud of n_points dots around (cx,cy,cz).
+// Points closer to the center use denser characters; outer ones use lighter.
+// Returns n_points.
+static int build_gaussian_splat(float cx, float cy, float cz,
+                                float sx, float sy, float sz,
+                                int n_points, int color, RDot* out) {
+    static const char density_chars[] = { '@', 'O', 'o', '*', '.' };
+    for (int i = 0; i < n_points; i++) {
+        float px = gauss_rand(cx, sx);
+        float py = gauss_rand(cy, sy);
+        float pz = gauss_rand(cz, sz);
+        // Normalised Mahalanobis distance — how many sigmas from the center
+        float nd = sqrtf(((px-cx)*(px-cx))/(sx*sx) +
+                         ((py-cy)*(py-cy))/(sy*sy) +
+                         ((pz-cz)*(pz-cz))/(sz*sz));
+        int ci = (int)(nd * 1.6f);
+        if (ci > 4) ci = 4;
+        out[i] = rdot_make(vec3f_make(px, py, pz), density_chars[ci], color);
+    }
+    return n_points;
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -213,6 +254,18 @@ int main() {
             }
         }
     }
+
+    // ── Gaussian splats ───────────────────────────────────────────────────────
+    // 3 splats randomly placed near each of the 3 scene objects.
+    // Fixed seed → deterministic layout; each splat has a distinct color.
+    srand(42);
+    const int SPLAT_N = 300;
+    RDot splat0[SPLAT_N]; // bright cyan   — next to cube      (0,  0,  0)
+    RDot splat1[SPLAT_N]; // bright yellow — next to sphere   (22,  0,  0)
+    RDot splat2[SPLAT_N]; // bright magenta— next to diablo  (-22,-12,  0)
+    int splat0_n = build_gaussian_splat(-13.0f,  9.0f, -9.0f,  3.5f, 3.5f, 3.5f, SPLAT_N, 96, splat0);
+    int splat1_n = build_gaussian_splat( 30.0f,  9.0f, -9.0f,  3.5f, 3.5f, 3.5f, SPLAT_N, 93, splat1);
+    int splat2_n = build_gaussian_splat(-33.0f,  6.0f,  9.0f,  3.5f, 3.5f, 3.5f, SPLAT_N, 95, splat2);
 
     // ── Loop ─────────────────────────────────────────────────────────────────
     int clk = clock_create(60, "demo");
@@ -294,6 +347,9 @@ int main() {
         for (int i = 0; i < 12;         i++) draw_face(cube[i]);
         for (int i = 0; i < dot_count;  i++) draw_dot(sphere[i]);
         for (int i = 0; i < nfaces_mdl; i++) draw_face(mdl_faces[i]);
+        for (int i = 0; i < splat0_n;   i++) draw_dot(splat0[i]);
+        for (int i = 0; i < splat1_n;   i++) draw_dot(splat1[i]);
+        for (int i = 0; i < splat2_n;   i++) draw_dot(splat2[i]);
 
         // HUD
         Camera* c = cam_get(cam);
