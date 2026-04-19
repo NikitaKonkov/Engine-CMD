@@ -367,8 +367,8 @@ for /f "delims=" %%f in ('dir /s /b "C:\Program Files\Microsoft Visual Studio\vc
 >> "!CF!" echo.
 >> "!CF!" echo.
 >> "!CF!" echo # -- MSVC Paths (auto-detected, used when COMPILER=msvc) -------
->> "!CF!" echo VCVARS32=!DET32!
->> "!CF!" echo VCVARS64=!DET64!
+>> "!CF!" echo VCVARS32=C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Auxiliary\Build\vcvars32.bat
+>> "!CF!" echo VCVARS64=C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Auxiliary\Build\vcvars64.bat
 >> "!CF!" echo.
 >> "!CF!" echo.
 >> "!CF!" echo.
@@ -382,7 +382,7 @@ for /f "delims=" %%f in ('dir /s /b "C:\Program Files\Microsoft Visual Studio\vc
 >> "!CF!" echo # -- Source Folders ---------------------------------------------
 >> "!CF!" echo #  Auto-compile ALL .cpp/.c files found in these folders
 >> "!CF!" echo #  (space-separated folder names, non-recursive)
->> "!CF!" echo SOURCE_FOLDERS=core
+>> "!CF!" echo SOURCE_FOLDERS=core core\console core\input core\clock core\sound core\render core\render\tinyrenderer-master
 >> "!CF!" echo.
 >> "!CF!" echo.
 >> "!CF!" echo.
@@ -460,7 +460,7 @@ for /f "delims=" %%f in ('dir /s /b "C:\Program Files\Microsoft Visual Studio\vc
 >> "!CF!" echo #  /favor:AMD64 = optimize for AMD64
 >> "!CF!" echo #  /arch:SSE2   = SSE2 instructions (32-bit)
 >> "!CF!" echo #  /arch:AVX2   = AVX2 instructions
->> "!CF!" echo MSVC_EXTRA=
+>> "!CF!" echo MSVC_EXTRA=/wd4244
 >> "!CF!" echo.
 >> "!CF!" echo.
 >> "!CF!" echo.
@@ -482,7 +482,7 @@ for /f "delims=" %%f in ('dir /s /b "C:\Program Files\Microsoft Visual Studio\vc
 >> "!CF!" echo #  Space-separated .lib files to link
 >> "!CF!" echo #  kernel32.lib  user32.lib  gdi32.lib   shell32.lib
 >> "!CF!" echo #  advapi32.lib  ole32.lib   ws2_32.lib  ntdll.lib
->> "!CF!" echo MSVC_LIBS=kernel32.lib
+>> "!CF!" echo MSVC_LIBS=user32.lib
 >> "!CF!" echo.
 >> "!CF!" echo.
 >> "!CF!" echo.
