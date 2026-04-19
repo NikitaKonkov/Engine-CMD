@@ -121,10 +121,23 @@ init_compiler() {
     LINK_LIBS=""
     [[ -n "$CFG_GCC_LIBS" ]]          && LINK_LIBS="$CFG_GCC_LIBS"
 
-    # 32-bit cross-compilation
+    # 32-bit cross-compilation (only works on x86/x86_64 hosts)
     if [[ "$ARCH" == "32" ]]; then
-        CC_FLAGS="$CC_FLAGS -m32"
-        LD_FLAGS="$LD_FLAGS -m32"
+        local machine
+        machine=$(uname -m 2>/dev/null || echo "unknown")
+        case "$machine" in
+            x86_64|i686|i386)
+                CC_FLAGS="$CC_FLAGS -m32"
+                LD_FLAGS="$LD_FLAGS -m32"
+                ;;
+            *)
+                echo "[WARN] -m32 not supported on $machine — building native instead"
+                ARCH="64"
+                BIN_DIR="bin${ARCH}"
+                EXE_DIR="exe${ARCH}"
+                mkdir -p "$BIN_DIR" "$EXE_DIR"
+                ;;
+        esac
     fi
 
     COMPILE_DISPLAY="$CC $CC_FLAGS"
