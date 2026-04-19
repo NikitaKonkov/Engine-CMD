@@ -166,8 +166,10 @@ int main() {
 
     // ── Diablo3 model ────────────────────────────────────────────────────────
     std::string mdl_path = project_path("core\\render\\tinyrenderer-master\\obj\\diablo3_pose\\diablo3_pose.obj");
+    fprintf(stderr, "[DEBUG] model path: %s\n", mdl_path.c_str());
     Model diablo(mdl_path);
     int nfaces_mdl = diablo.nfaces();
+    fprintf(stderr, "[DEBUG] model faces: %d\n", nfaces_mdl);
 
     // Convert diffuse TGA → ANSI color texture
     int ansi_tw = 0, ansi_th = 0;
@@ -205,9 +207,9 @@ int main() {
                     vec2f_make((float)uv0.x, (float)uv0.y),
                     vec2f_make((float)uv1.x, (float)uv1.y),
                     vec2f_make((float)uv2.x, (float)uv2.y),
-                    ansi_tex, ansi_tw, ansi_th, '#');
+                    ansi_tex, ansi_tw, ansi_th, '@');
             } else {
-                mdl_faces[i] = rface_make(a, b, cc, 31, '#'); // red fallback
+                mdl_faces[i] = rface_make(a, b, cc, 95, '@'); // magenta fallback
             }
         }
     }
