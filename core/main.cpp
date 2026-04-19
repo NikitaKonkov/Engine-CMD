@@ -39,8 +39,10 @@ static std::string project_path(const char* relative) {
     root += relative;
     return root;
 #else
-    // On other platforms assume CWD = project root
-    return std::string(relative);
+    // On Linux/Termux: CWD = project root; convert backslashes to forward slashes
+    std::string path(relative);
+    for (char& c : path) if (c == '\\') c = '/';
+    return path;
 #endif
 }
 
