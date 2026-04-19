@@ -2,11 +2,10 @@
 // Input_Manager.cpp — Cross-platform keyboard & mouse input
 //
 // Windows: WinAPI (GetAsyncKeyState, GetCursorPos, SetCursorPos, SendInput)
-// Linux:   X11 (XQueryKeymap, XQueryPointer, XWarpPointer) +
-//          XTest (XTestFakeKeyEvent, XTestFakeButtonEvent)
+// Linux:   Terminal (termios raw mode, non-blocking stdin)
 //
 // Key codes: We use VK_ constants (Windows-compatible values) everywhere.
-// On Linux the .cpp maps VK → X11 KeySym → KeyCode internally.
+// On Linux the .cpp maps terminal bytes / escape sequences to VK codes.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #include "Input_Manager.hpp"
@@ -55,79 +54,8 @@
       }
   }
 
-// ── Detect X11 availability at compile time ─────────────────────────────────
-// If X11 headers are not found, fall back to terminal (termios) input.
-// To force terminal mode even with X11 installed, define INPUT_NO_X11.
-// Check X11/X.h too — some systems (Termux) ship Xlib.h but lack transitive deps.
-#elif !defined(INPUT_NO_X11) && __has_include(<X11/Xlib.h>) && __has_include(<X11/X.h>)
-  #define INPUT_USE_X11
-  #include <X11/Xlib.h>
-  #include <X11/keysym.h>
-  #include <X11/extensions/XTest.h>
-
-  // Lazy-init X11 display — opened once, never closed (lives for process life)
-  static Display* g_display = nullptr;
-  static Display* get_display(void) {
-      if (!g_display) {
-          g_display = XOpenDisplay(nullptr);
-          if (!g_display) {
-              fprintf(stderr, "[Input] Failed to open X11 display\n");
-          }
-      }
-      return g_display;
-  }
-
-  // ── VK → X11 KeySym mapping ────────────────────────────────────────────────
-  static KeySym vk_to_keysym(int vk) {
-      if (vk >= 0x41 && vk <= 0x5A) return XK_a + (vk - 0x41);
-      if (vk >= 0x30 && vk <= 0x39) return XK_0 + (vk - 0x30);
-      if (vk >= 0x60 && vk <= 0x69) return XK_KP_0 + (vk - 0x60);
-      if (vk >= 0x70 && vk <= 0x7B) return XK_F1 + (vk - 0x70);
-      switch (vk) {
-          case 0x1B: return XK_Escape;
-          case 0x09: return XK_Tab;
-          case 0x14: return XK_Caps_Lock;
-          case 0x10: return XK_Shift_L;
-          case 0x11: return XK_Control_L;
-          case 0x12: return XK_Alt_L;
-          case 0x20: return XK_space;
-          case 0x0D: return XK_Return;
-          case 0x08: return XK_BackSpace;
-          case 0x25: return XK_Left;
-          case 0x26: return XK_Up;
-          case 0x27: return XK_Right;
-          case 0x28: return XK_Down;
-          case 0x2D: return XK_Insert;
-          case 0x2E: return XK_Delete;
-          case 0x24: return XK_Home;
-          case 0x23: return XK_End;
-          case 0x21: return XK_Page_Up;
-          case 0x22: return XK_Page_Down;
-          case 0x2C: return XK_Print;
-          case 0x13: return XK_Pause;
-          case 0x91: return XK_Scroll_Lock;
-          case 0x6A: return XK_KP_Multiply;
-          case 0x6B: return XK_KP_Add;
-          case 0x6C: return XK_KP_Separator;
-          case 0x6D: return XK_KP_Subtract;
-          case 0x6E: return XK_KP_Decimal;
-          case 0x6F: return XK_KP_Divide;
-          default:   return NoSymbol;
-      }
-  }
-
-  static unsigned int vk_to_x11_button(int vk) {
-      switch (vk) {
-          case 0x01: return 1;
-          case 0x02: return 3;
-          case 0x04: return 2;
-          default:   return 0;
-      }
-  }
-
+// ── Terminal (termios) — works on Linux, Termux, SSH, headless ──────────────
 #else
-  // ── Terminal (termios) fallback — works on Termux, SSH, headless Linux ────
-  #define INPUT_USE_TERMIOS
   #include <termios.h>
   #include <unistd.h>
   #include <fcntl.h>
@@ -216,16 +144,6 @@
 int input_key_held(int vk) {
 #if defined(_WIN32)
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
-#elif defined(INPUT_USE_X11)
-    Display* dpy = get_display();
-    if (!dpy) return 0;
-    KeySym ks = vk_to_keysym(vk);
-    if (ks == NoSymbol) return 0;
-    KeyCode kc = XKeysymToKeycode(dpy, ks);
-    if (kc == 0) return 0;
-    char keys[32];
-    XQueryKeymap(dpy, keys);
-    return (keys[kc / 8] >> (kc % 8)) & 1;
 #else
     term_poll_input();
     if (vk < 0 || vk > 255) return 0;
@@ -237,32 +155,9 @@ int input_key_held(int vk) {
 // Windows: GetAsyncKeyState LSB toggles each time the key transitions.
 // Linux:   We track previous state manually.
 
-#if !defined(_WIN32) && defined(INPUT_USE_X11)
-static char g_prev_keys[32] = {0};
-#endif
-
 int input_key_pressed(int vk) {
 #if defined(_WIN32)
     return (GetAsyncKeyState(vk) & 0x0001) != 0;
-#elif defined(INPUT_USE_X11)
-    Display* dpy = get_display();
-    if (!dpy) return 0;
-    KeySym ks = vk_to_keysym(vk);
-    if (ks == NoSymbol) return 0;
-    KeyCode kc = XKeysymToKeycode(dpy, ks);
-    if (kc == 0) return 0;
-
-    char keys[32];
-    XQueryKeymap(dpy, keys);
-    int now  = (keys[kc / 8] >> (kc % 8)) & 1;
-    int prev = (g_prev_keys[kc / 8] >> (kc % 8)) & 1;
-
-    if (now)
-        g_prev_keys[kc / 8] |= (1 << (kc % 8));
-    else
-        g_prev_keys[kc / 8] &= ~(1 << (kc % 8));
-
-    return (now && !prev);
 #else
     // In terminal mode, key_held already represents a single-frame press
     return input_key_held(vk);
@@ -296,18 +191,8 @@ void input_key_send(int vk) {
     inputs[1].ki.wVk     = (WORD)vk;
     inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
     SendInput(2, inputs, sizeof(INPUT));
-#elif defined(INPUT_USE_X11)
-    Display* dpy = get_display();
-    if (!dpy) return;
-    KeySym ks = vk_to_keysym(vk);
-    if (ks == NoSymbol) return;
-    KeyCode kc = XKeysymToKeycode(dpy, ks);
-    if (kc == 0) return;
-    XTestFakeKeyEvent(dpy, kc, True, 0);
-    XTestFakeKeyEvent(dpy, kc, False, 0);
-    XFlush(dpy);
 #else
-    (void)vk; // Not supported in terminal mode
+    (void)vk;
 #endif
 }
 
@@ -335,24 +220,6 @@ void input_keys_send(int count, ...) {
     }
     va_end(args);
     SendInput(idx, inputs, sizeof(INPUT));
-#elif defined(INPUT_USE_X11)
-    Display* dpy = get_display();
-    if (!dpy) return;
-    KeyCode codes[256];
-    va_start(args, count);
-    int n = 0;
-    for (int i = 0; i < count && n < 256; i++) {
-        int vk = va_arg(args, int);
-        KeySym ks = vk_to_keysym(vk);
-        if (ks == NoSymbol) continue;
-        KeyCode kc = XKeysymToKeycode(dpy, ks);
-        if (kc == 0) continue;
-        codes[n++] = kc;
-    }
-    va_end(args);
-    for (int i = 0; i < n; i++) XTestFakeKeyEvent(dpy, codes[i], True, 0);
-    for (int i = 0; i < n; i++) XTestFakeKeyEvent(dpy, codes[i], False, 0);
-    XFlush(dpy);
 #else
     va_start(args, count);
     for (int i = 0; i < count; i++) (void)va_arg(args, int);
@@ -372,16 +239,6 @@ void input_mouse_get(int* x, int* y) {
         *x = -1;
         *y = -1;
     }
-#elif defined(INPUT_USE_X11)
-    Display* dpy = get_display();
-    if (!dpy) { *x = -1; *y = -1; return; }
-    Window root = DefaultRootWindow(dpy);
-    Window child;
-    int root_x, root_y, win_x, win_y;
-    unsigned int mask;
-    XQueryPointer(dpy, root, &root, &child, &root_x, &root_y, &win_x, &win_y, &mask);
-    *x = root_x;
-    *y = root_y;
 #else
     *x = -1;
     *y = -1;
@@ -393,12 +250,6 @@ void input_mouse_get(int* x, int* y) {
 void input_mouse_set(int x, int y) {
 #if defined(_WIN32)
     SetCursorPos(x, y);
-#elif defined(INPUT_USE_X11)
-    Display* dpy = get_display();
-    if (!dpy) return;
-    Window root = DefaultRootWindow(dpy);
-    XWarpPointer(dpy, None, root, 0, 0, 0, 0, x, y);
-    XFlush(dpy);
 #else
     (void)x; (void)y;
 #endif
@@ -409,19 +260,6 @@ void input_mouse_set(int x, int y) {
 int input_mouse_held(int button) {
 #if defined(_WIN32)
     return (GetAsyncKeyState(button) & 0x8000) != 0;
-#elif defined(INPUT_USE_X11)
-    Display* dpy = get_display();
-    if (!dpy) return 0;
-    Window root = DefaultRootWindow(dpy);
-    Window child;
-    int rx, ry, wx, wy;
-    unsigned int mask;
-    XQueryPointer(dpy, root, &root, &child, &rx, &ry, &wx, &wy, &mask);
-    unsigned int btn = vk_to_x11_button(button);
-    if (btn == 1) return (mask & Button1Mask) != 0;
-    if (btn == 2) return (mask & Button2Mask) != 0;
-    if (btn == 3) return (mask & Button3Mask) != 0;
-    return 0;
 #else
     (void)button;
     return 0;
@@ -448,16 +286,6 @@ int input_mouse_wheel(void) {
 #if defined(_WIN32)
     ensure_wheel_hook();
     return (int)InterlockedExchange(&g_wheel_accum, 0);
-#elif defined(INPUT_USE_X11)
-    Display* dpy = get_display();
-    if (!dpy) return 0;
-    int delta = 0;
-    XEvent ev;
-    while (XCheckMaskEvent(dpy, ButtonPressMask, &ev)) {
-        if (ev.xbutton.button == 4)      delta += 120;
-        else if (ev.xbutton.button == 5) delta -= 120;
-    }
-    return delta;
 #else
     return 0;
 #endif
