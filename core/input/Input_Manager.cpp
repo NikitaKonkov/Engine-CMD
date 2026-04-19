@@ -139,13 +139,22 @@
   }
 #endif
 
+// ─── Polling ─────────────────────────────────────────────────────────────────
+
+void input_poll(void) {
+#if defined(_WIN32)
+    // No-op: Windows uses GetAsyncKeyState which is real-time
+#else
+    term_poll_input();
+#endif
+}
+
 // ─── Keyboard: key held ──────────────────────────────────────────────────────
 
 int input_key_held(int vk) {
 #if defined(_WIN32)
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 #else
-    term_poll_input();
     if (vk < 0 || vk > 255) return 0;
     return g_term_keys[vk];
 #endif

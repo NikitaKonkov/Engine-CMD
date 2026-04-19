@@ -237,7 +237,9 @@ int main() {
         }
     }
 
-    while (!input_key_held(VK_ESCAPE_)) {
+    while (1) {
+        input_poll();  // drain stdin once per frame (Linux)
+        if (input_key_held(VK_ESCAPE_)) break;
         if (!clock_sync(clk)) { sleep_ms(1); continue; }
 
         // Resize guard

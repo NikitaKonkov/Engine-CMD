@@ -121,6 +121,12 @@
 #define VK_RBUTTON_      0x02
 #define VK_MBUTTON_      0x04
 
+// ─── API: Polling ────────────────────────────────────────────────────────────
+
+// Call once per frame before any input queries.
+// On Windows this is a no-op. On Linux it drains stdin and updates key state.
+void input_poll(void);
+
 // ─── API: Keyboard ───────────────────────────────────────────────────────────
 
 // Is this key currently held down? (real-time, no buffering)
