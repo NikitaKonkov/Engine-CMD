@@ -9,6 +9,13 @@
 #include <limits.h>
 #include <string>
 
+// Modular entity system + shader effects
+#include "render/module/Entity.h"
+#include "render/module/Shader_Depth.h"
+#include "render/module/Shader_Wave.h"
+#include "render/module/Shader_Rotate.h"
+#include "render/module/Shader_Splat.h"
+
 // Cross-platform sleep
 #if defined(_WIN32)
   #include <windows.h>
@@ -137,46 +144,7 @@ static int build_sphere_dots(float cx, float cy, float cz, float r,
     return idx;
 }
 
-// ─── Gaussian splat helpers ──────────────────────────────────────────────────
-
-// Box-Muller transform: returns a Gaussian-distributed float (mean, stddev)
-static float gauss_rand(float mean, float stddev) {
-    static int   spare_ready = 0;
-    static float spare_val   = 0.0f;
-    if (spare_ready) { spare_ready = 0; return mean + stddev * spare_val; }
-    float u, v, s;
-    do {
-        u = (float)rand() / (float)RAND_MAX * 2.0f - 1.0f;
-        v = (float)rand() / (float)RAND_MAX * 2.0f - 1.0f;
-        s = u*u + v*v;
-    } while (s >= 1.0f || s == 0.0f);
-    float mul  = sqrtf(-2.0f * logf(s) / s);
-    spare_val  = v * mul;
-    spare_ready = 1;
-    return mean + stddev * u * mul;
-}
-
-// Build a Gaussian splat as a cloud of n_points dots around (cx,cy,cz).
-// Points closer to the center use denser characters; outer ones use lighter.
-// Returns n_points.
-static int build_gaussian_splat(float cx, float cy, float cz,
-                                float sx, float sy, float sz,
-                                int n_points, int color, RDot* out) {
-    static const char density_chars[] = { '@', 'O', 'o', '*', '.' };
-    for (int i = 0; i < n_points; i++) {
-        float px = gauss_rand(cx, sx);
-        float py = gauss_rand(cy, sy);
-        float pz = gauss_rand(cz, sz);
-        // Normalised Mahalanobis distance — how many sigmas from the center
-        float nd = sqrtf(((px-cx)*(px-cx))/(sx*sx) +
-                         ((py-cy)*(py-cy))/(sy*sy) +
-                         ((pz-cz)*(pz-cz))/(sz*sz));
-        int ci = (int)(nd * 1.6f);
-        if (ci > 4) ci = 4;
-        out[i] = rdot_make(vec3f_make(px, py, pz), density_chars[ci], color);
-    }
-    return n_points;
-}
+// (Gaussian splat helpers moved to render/modul/Shader_Splat.h)
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
@@ -193,39 +161,42 @@ int main() {
     cam_set_clip  (cam, 0.5f, 500.0f);
     cam_set_fov   (cam, 90.0f);
 
-    // ── Scene ────────────────────────────────────────────────────────────────
-    // Red solid cube at origin
-    RFace cube[12];
-    build_solid_cube(0, 0, 0, 12, 31, cube);   // 31 = red
+    // ── Entities ─────────────────────────────────────────────────────────────
 
-    // Green dot sphere to the right of the cube
-    const int RINGS   = 12;
-    const int SECTORS = 24;
-    const int NDOTS   = (RINGS + 1) * SECTORS;  // 312
-    RDot sphere[NDOTS];
-    int dot_count = build_sphere_dots(22, 0, 0, 7, RINGS, SECTORS, 32, 'O', sphere); // 32 = green
+    // Cube at origin — rotation shader: ASCII chars change by viewing angle
+    int ent_cube = entity_create();
+    {
+        RFace tmp[12];
+        build_solid_cube(0, 0, 0, 12, 31, tmp);
+        entity_add_faces(ent_cube, tmp, 12);
+        entity_set_shader(ent_cube, shader_rotate);
+    }
 
-    // ── Diablo3 model ────────────────────────────────────────────────────────
-    std::string mdl_path = project_path("core\\render\\tinyrenderer-master\\obj\\diablo3_pose\\diablo3_pose.obj");
-    fprintf(stderr, "[DEBUG] model path: %s\n", mdl_path.c_str());
-    Model diablo(mdl_path);
-    int nfaces_mdl = diablo.nfaces();
-    fprintf(stderr, "[DEBUG] model faces: %d\n", nfaces_mdl);
+    // Dot sphere to the right — depth shader: chars/colors fade with distance
+    int ent_sphere = entity_create();
+    {
+        const int RINGS   = 12;
+        const int SECTORS = 24;
+        const int NDOTS   = (RINGS + 1) * SECTORS;  // 312
+        RDot tmp[NDOTS];
+        int n = build_sphere_dots(0, 0, 0, 7, RINGS, SECTORS, 32, 'O', tmp);
+        entity_add_dots(ent_sphere, tmp, n);
+        entity_set_pos(ent_sphere, 22.0f, 0.0f, 0.0f);
+        entity_set_shader(ent_sphere, shader_depth);
+    }
 
-    // Convert diffuse TGA → ANSI color texture
+    // Diablo3 model to the left — textured (no extra shader needed)
+    int* ansi_tex = NULL;
     int ansi_tw = 0, ansi_th = 0;
-    int* ansi_tex = tga_to_ansi_texture(diablo.diffuse(), &ansi_tw, &ansi_th);
+    int ent_diablo = entity_create();
+    {
+        std::string mdl_path = project_path("core\\render\\tinyrenderer-master\\obj\\diablo3_pose\\diablo3_pose.obj");
+        Model diablo(mdl_path);
+        int nfaces = diablo.nfaces();
+        ansi_tex = tga_to_ansi_texture(diablo.diffuse(), &ansi_tw, &ansi_th);
 
-    // Build RFace array from model triangles, scaled & positioned
-    const float MDL_SCALE = 15.0f;
-    const float MDL_X = -22.0f;  // left of the cube
-    const float MDL_Y = -12.0f;  // feet roughly at ground level
-    const float MDL_Z = 0.0f;
-
-    RFace* mdl_faces = NULL;
-    if (nfaces_mdl > 0) {
-        mdl_faces = new RFace[nfaces_mdl];
-        for (int i = 0; i < nfaces_mdl; i++) {
+        const float S = 15.0f;
+        for (int i = 0; i < nfaces; i++) {
             vec4 v0 = diablo.vert(i, 0);
             vec4 v1 = diablo.vert(i, 1);
             vec4 v2 = diablo.vert(i, 2);
@@ -233,39 +204,39 @@ int main() {
             vec2 uv1 = diablo.uv(i, 1);
             vec2 uv2 = diablo.uv(i, 2);
 
-            Vec3f a = vec3f_make(MDL_X + (float)v0.x * MDL_SCALE,
-                                 MDL_Y + (float)v0.y * MDL_SCALE,
-                                         (float)v0.z * MDL_SCALE + MDL_Z);
-            Vec3f b = vec3f_make(MDL_X + (float)v1.x * MDL_SCALE,
-                                 MDL_Y + (float)v1.y * MDL_SCALE,
-                                         (float)v1.z * MDL_SCALE + MDL_Z);
-            Vec3f cc = vec3f_make(MDL_X + (float)v2.x * MDL_SCALE,
-                                  MDL_Y + (float)v2.y * MDL_SCALE,
-                                          (float)v2.z * MDL_SCALE + MDL_Z);
+            // Local space — entity position handles world offset
+            Vec3f a  = vec3f_make((float)v0.x * S, (float)v0.y * S, (float)v0.z * S);
+            Vec3f b  = vec3f_make((float)v1.x * S, (float)v1.y * S, (float)v1.z * S);
+            Vec3f cc = vec3f_make((float)v2.x * S, (float)v2.y * S, (float)v2.z * S);
 
-            if (ansi_tex) {
-                mdl_faces[i] = rface_make_textured(a, b, cc,
+            if (ansi_tex)
+                entity_add_face(ent_diablo, rface_make_textured(a, b, cc,
                     vec2f_make((float)uv0.x, (float)uv0.y),
                     vec2f_make((float)uv1.x, (float)uv1.y),
                     vec2f_make((float)uv2.x, (float)uv2.y),
-                    ansi_tex, ansi_tw, ansi_th, '@');
-            } else {
-                mdl_faces[i] = rface_make(a, b, cc, 95, '@'); // magenta fallback
-            }
+                    ansi_tex, ansi_tw, ansi_th, '@'));
+            else
+                entity_add_face(ent_diablo, rface_make(a, b, cc, 95, '@'));
         }
+        entity_set_pos(ent_diablo, -22.0f, -12.0f, 0.0f);
     }
 
-    // ── Gaussian splats ───────────────────────────────────────────────────────
-    // 3 splats randomly placed near each of the 3 scene objects.
-    // Fixed seed → deterministic layout; each splat has a distinct color.
+    // Gaussian splats — one near each model, with pulsing animation
     srand(42);
-    const int SPLAT_N = 300;
-    RDot splat0[SPLAT_N]; // bright cyan   — next to cube      (0,  0,  0)
-    RDot splat1[SPLAT_N]; // bright yellow — next to sphere   (22,  0,  0)
-    RDot splat2[SPLAT_N]; // bright magenta— next to diablo  (-22,-12,  0)
-    int splat0_n = build_gaussian_splat(-13.0f,  9.0f, -9.0f,  3.5f, 3.5f, 3.5f, SPLAT_N, 96, splat0);
-    int splat1_n = build_gaussian_splat( 30.0f,  9.0f, -9.0f,  3.5f, 3.5f, 3.5f, SPLAT_N, 93, splat1);
-    int splat2_n = build_gaussian_splat(-33.0f,  6.0f,  9.0f,  3.5f, 3.5f, 3.5f, SPLAT_N, 95, splat2);
+    int ent_splat0 = entity_create();
+    splat_build(ent_splat0, 300, 3.5f, 3.5f, 3.5f, 96);   // bright cyan
+    entity_set_pos(ent_splat0, -13.0f, 9.0f, -9.0f);
+    shader_splat_pulse_attach(ent_splat0, 0.5f, 2.0f);
+
+    int ent_splat1 = entity_create();
+    splat_build(ent_splat1, 300, 3.5f, 3.5f, 3.5f, 93);   // bright yellow
+    entity_set_pos(ent_splat1, 30.0f, 9.0f, -9.0f);
+    shader_splat_pulse_attach(ent_splat1, 0.5f, 2.0f);
+
+    int ent_splat2 = entity_create();
+    splat_build(ent_splat2, 300, 3.5f, 3.5f, 3.5f, 95);   // bright magenta
+    entity_set_pos(ent_splat2, -33.0f, 6.0f, 9.0f);
+    shader_splat_pulse_attach(ent_splat2, 0.5f, 2.0f);
 
     // ── Loop ─────────────────────────────────────────────────────────────────
     int clk = clock_create(60, "demo");
@@ -342,14 +313,11 @@ int main() {
         cam_set_rotation(cam, cam_yaw, cam_pitch, 0.0f);
         cam_update(cam);
 
-        // Draw scene (no manual cam_swap — render_present handles it)
+        // Slowly rotate the cube to show per-entity transforms
+        entity_rotate(ent_cube, 0.01f, 0.005f, 0.0f);
 
-        for (int i = 0; i < 12;         i++) draw_face(cube[i]);
-        for (int i = 0; i < dot_count;  i++) draw_dot(sphere[i]);
-        for (int i = 0; i < nfaces_mdl; i++) draw_face(mdl_faces[i]);
-        for (int i = 0; i < splat0_n;   i++) draw_dot(splat0[i]);
-        for (int i = 0; i < splat1_n;   i++) draw_dot(splat1[i]);
-        for (int i = 0; i < splat2_n;   i++) draw_dot(splat2[i]);
+        // Draw all entities (shaders → local-to-world → draw)
+        entity_draw_all(1.0f / 60.0f);
 
         // HUD
         Camera* c = cam_get(cam);
@@ -360,7 +328,7 @@ int main() {
         render_present(cam);  // diff front vs back → ANSI output → swap
     }
 
-    delete[] mdl_faces;
+    entity_destroy_all();
     free(ansi_tex);
     cam_destroy_all();
     con_cursor_show();
