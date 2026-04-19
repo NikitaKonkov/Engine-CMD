@@ -3,7 +3,10 @@ exe32/
 exe64/
 bin32/
 bin64/
-*.obj
+
+# Compiled object files (not Wavefront .obj models)
+/bin32/*.obj
+/bin64/*.obj
 *.o
 
 # IDE and editor files

@@ -117,7 +117,7 @@ void con_clear(void) {
 #if defined(_WIN32)
     system("cls");
 #else
-    system("clear");
+    (void)system("clear");
 #endif
 }
 
