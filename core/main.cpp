@@ -290,6 +290,7 @@ int main() {
         cam_update(cam);
 
         // Draw scene (no manual cam_swap — render_present handles it)
+
         for (int i = 0; i < 12;         i++) draw_face(cube[i]);
         for (int i = 0; i < dot_count;  i++) draw_dot(sphere[i]);
         for (int i = 0; i < nfaces_mdl; i++) draw_face(mdl_faces[i]);

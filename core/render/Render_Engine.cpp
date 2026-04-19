@@ -446,8 +446,8 @@ Vec3f cam_project(int id, Vec3f world_pos) {
     float fov_tan = tanf((c->fov * 0.5f) * (float)M_PI / 180.0f);
     float scale   = c->zoom / fov_tan;
 
-    float sx = (dx / dz) * half_w * scale * c->aspect_w + half_w;
-    float sy = (dy / dz) * half_h * scale * c->aspect_h + half_h;
+    float sx =  (dx / dz) * half_w * scale * c->aspect_w + half_w;
+    float sy = -(dy / dz) * half_h * scale * c->aspect_h + half_h;
 
     return vec3f_make(sx, sy, dz);
 }
