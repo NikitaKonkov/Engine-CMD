@@ -216,9 +216,26 @@ int main() {
 
     // ── Loop ─────────────────────────────────────────────────────────────────
     int clk = clock_create(144, "demo");
-    const float ORBIT_R = 45.0f;
-    const float ORBIT_H = 12.0f;
-    float angle = 0.0f;
+
+    // Flying camera state
+    float cam_x = 0.0f, cam_y = 12.0f, cam_z = 45.0f;
+    float cam_yaw = PI, cam_pitch = 0.0f;
+    const float MOVE_SPEED = 0.5f;
+    const float TURN_SPEED = 0.04f;
+
+    // Mouse look state (Windows only — on Linux input_mouse_get returns -1)
+    const int   MOUSE_CENTER_X  = 200;
+    const int   MOUSE_CENTER_Y  = 200;
+    const float MOUSE_SENS      = 0.005f;
+    int mouse_ok = 0;
+    {
+        int mx, my;
+        input_mouse_get(&mx, &my);
+        if (mx >= 0 && my >= 0) {
+            input_mouse_set(MOUSE_CENTER_X, MOUSE_CENTER_Y);
+            mouse_ok = 1;
+        }
+    }
 
     while (!input_key_held(VK_ESCAPE_)) {
         if (!clock_sync(clk)) { sleep_ms(1); continue; }
@@ -230,25 +247,44 @@ int main() {
             con_clear();
         }
 
-        // Orbit around origin
-        angle += 0.015f;
-        float cx = ORBIT_R * cosf(angle);
-        float cz = ORBIT_R * sinf(angle);
-        cam_set_position(cam, cx, ORBIT_H, cz);
+        // ── Mouse look (yaw + pitch) ────────────────────────────────────
+        if (mouse_ok) {
+            int mx, my;
+            input_mouse_get(&mx, &my);
+            int dx = mx - MOUSE_CENTER_X;
+            int dy = my - MOUSE_CENTER_Y;
+            if (dx || dy) {
+                cam_yaw   += dx * MOUSE_SENS;
+                cam_pitch += dy * MOUSE_SENS;
+                // Clamp pitch to ~85 degrees
+                if (cam_pitch >  1.5f) cam_pitch =  1.5f;
+                if (cam_pitch < -1.5f) cam_pitch = -1.5f;
+            }
+            input_mouse_set(MOUSE_CENTER_X, MOUSE_CENTER_Y);
+        }
 
-        // ── Yaw: look toward origin ──────────────────────────────────────
-        // forward.x = -sin(yaw), forward.z = cos(yaw).
-        // To face origin from (cx, H, cz): forward ∝ (-cx, -, -cz)
-        //   -sin(yaw) = -cos(angle)  →  sin(yaw) = cos(angle)
-        //    cos(yaw) = -sin(angle)
-        // → yaw = π/2 + angle
-        float yaw   = PI * 0.5f + angle;
+        // ── Keyboard rotation fallback: Q/E = yaw left/right ───────────
+        if (input_key_held(VK_Q_)) cam_yaw   -= TURN_SPEED;
+        if (input_key_held(VK_E_)) cam_yaw   += TURN_SPEED;
 
-        // ── Pitch: tilt down toward origin ───────────────────────────────
-        // Positive pitch → forward.y = -sin(pitch) goes negative (down).
-        float pitch = atan2f(ORBIT_H, ORBIT_R);   // ~0.26 rad
+        // ── Forward/right vectors from yaw ──────────────────────────────
+        float fwd_x = -sinf(cam_yaw);
+        float fwd_z =  cosf(cam_yaw);
+        float rgt_x =  cosf(cam_yaw);
+        float rgt_z =  sinf(cam_yaw);
 
-        cam_set_rotation(cam, yaw, pitch, 0.0f);
+        // ── Movement: WASD = forward/left/back/right ────────────────────
+        if (input_key_held(VK_W_)) { cam_x += fwd_x * MOVE_SPEED; cam_z += fwd_z * MOVE_SPEED; }
+        if (input_key_held(VK_S_)) { cam_x -= fwd_x * MOVE_SPEED; cam_z -= fwd_z * MOVE_SPEED; }
+        if (input_key_held(VK_A_)) { cam_x -= rgt_x * MOVE_SPEED; cam_z -= rgt_z * MOVE_SPEED; }
+        if (input_key_held(VK_D_)) { cam_x += rgt_x * MOVE_SPEED; cam_z += rgt_z * MOVE_SPEED; }
+
+        // ── Vertical: Space = up, Ctrl = down ───────────────────────────
+        if (input_key_held(VK_SPACE_))   cam_y += MOVE_SPEED;
+        if (input_key_held(VK_CONTROL_)) cam_y -= MOVE_SPEED;
+
+        cam_set_position(cam, cam_x, cam_y, cam_z);
+        cam_set_rotation(cam, cam_yaw, cam_pitch, 0.0f);
         cam_update(cam);
 
         // Draw scene (no manual cam_swap — render_present handles it)
@@ -259,8 +295,8 @@ int main() {
         // HUD
         Camera* c = cam_get(cam);
         con_move(1, 1);
-        con_printf(COL_BR_YELLOW "cam(%.0f,%.0f,%.0f) yaw=%.2f  faces=%d  ESC=quit" COL_RESET,
-                   c->pos.x, c->pos.y, c->pos.z, c->yaw, nfaces_mdl);
+        con_printf(COL_BR_YELLOW "cam(%.0f,%.0f,%.0f) yaw=%.2f  WASD=move QE=turn SPACE/CTRL=up/down  ESC=quit" COL_RESET,
+                   c->pos.x, c->pos.y, c->pos.z, c->yaw);
 
         render_present(cam);  // diff front vs back → ANSI output → swap
     }
