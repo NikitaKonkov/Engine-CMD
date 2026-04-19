@@ -61,13 +61,27 @@
   #include <fcntl.h>
   #include <sys/select.h>
   #include <sys/ioctl.h>
+  #include <sys/time.h>
 
-  // Key state table: tracks which VK codes are currently "held"
-  // We poll stdin each time input_key_held is called, draining all
-  // available bytes and mapping escape sequences to VK codes.
-  static int g_term_keys[256] = {0};   // 1 = held this frame
+  // Async-style key state: each key has a timestamp of the last byte received.
+  // A key is considered "held" if its timestamp is within KEY_HOLD_MS of now.
+  // Terminal key repeat sends at ~30ms intervals, so 120ms catches gaps.
+  #define KEY_HOLD_MS 120
+
+  static long long g_term_key_time[256] = {0};  // last-seen timestamp per VK (ms)
   static int g_term_init = 0;
   static struct termios g_orig_termios;
+
+  static long long term_now_ms(void) {
+      struct timeval tv;
+      gettimeofday(&tv, NULL);
+      return (long long)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+  }
+
+  static void term_mark_key(int vk) {
+      if (vk >= 0 && vk <= 255)
+          g_term_key_time[vk] = term_now_ms();
+  }
 
   static void term_input_init(void) {
       if (g_term_init) return;
@@ -84,12 +98,9 @@
       g_term_init = 1;
   }
 
-  // Drain stdin and update key state. Called at start of each input query.
+  // Drain stdin and stamp key times. Called once per frame via input_poll().
   static void term_poll_input(void) {
       term_input_init();
-      // Clear all keys (terminal can't detect key-up, so keys are "held"
-      // only for the frame in which their byte arrives)
-      memset(g_term_keys, 0, sizeof(g_term_keys));
 
       unsigned char buf[64];
       int n;
@@ -102,16 +113,16 @@
                       // CSI sequence
                       if (i + 2 < n) {
                           switch (buf[i+2]) {
-                              case 'A': g_term_keys[0x26] = 1; break; // Up
-                              case 'B': g_term_keys[0x28] = 1; break; // Down
-                              case 'C': g_term_keys[0x27] = 1; break; // Right
-                              case 'D': g_term_keys[0x25] = 1; break; // Left
-                              case 'H': g_term_keys[0x24] = 1; break; // Home
-                              case 'F': g_term_keys[0x23] = 1; break; // End
-                              case '5': g_term_keys[0x21] = 1; i++; break; // PgUp (5~)
-                              case '6': g_term_keys[0x22] = 1; i++; break; // PgDn (6~)
-                              case '2': g_term_keys[0x2D] = 1; i++; break; // Insert (2~)
-                              case '3': g_term_keys[0x2E] = 1; i++; break; // Delete (3~)
+                              case 'A': term_mark_key(0x26); break; // Up
+                              case 'B': term_mark_key(0x28); break; // Down
+                              case 'C': term_mark_key(0x27); break; // Right
+                              case 'D': term_mark_key(0x25); break; // Left
+                              case 'H': term_mark_key(0x24); break; // Home
+                              case 'F': term_mark_key(0x23); break; // End
+                              case '5': term_mark_key(0x21); i++; break; // PgUp (5~)
+                              case '6': term_mark_key(0x22); i++; break; // PgDn (6~)
+                              case '2': term_mark_key(0x2D); i++; break; // Insert (2~)
+                              case '3': term_mark_key(0x2E); i++; break; // Delete (3~)
                           }
                           i += 3;
                       } else {
@@ -119,19 +130,19 @@
                       }
                   } else {
                       // Bare escape = ESC key
-                      g_term_keys[0x1B] = 1;
+                      term_mark_key(0x1B);
                       i++;
                   }
               } else {
                   unsigned char c = buf[i];
-                  if (c == '\r' || c == '\n')       g_term_keys[0x0D] = 1; // Enter
-                  else if (c == '\t')               g_term_keys[0x09] = 1; // Tab
-                  else if (c == 127 || c == '\b')   g_term_keys[0x08] = 1; // Backspace
-                  else if (c == ' ')                g_term_keys[0x20] = 1; // Space
-                  else if (c >= 'a' && c <= 'z')    g_term_keys[0x41 + (c - 'a')] = 1;
-                  else if (c >= 'A' && c <= 'Z')    g_term_keys[0x41 + (c - 'A')] = 1;
-                  else if (c >= '0' && c <= '9')    g_term_keys[0x30 + (c - '0')] = 1;
-                  else if (c == 3)                  g_term_keys[0x1B] = 1; // Ctrl+C → ESC
+                  if (c == '\r' || c == '\n')       term_mark_key(0x0D); // Enter
+                  else if (c == '\t')               term_mark_key(0x09); // Tab
+                  else if (c == 127 || c == '\b')   term_mark_key(0x08); // Backspace
+                  else if (c == ' ')                term_mark_key(0x20); // Space
+                  else if (c >= 'a' && c <= 'z')    term_mark_key(0x41 + (c - 'a'));
+                  else if (c >= 'A' && c <= 'Z')    term_mark_key(0x41 + (c - 'A'));
+                  else if (c >= '0' && c <= '9')    term_mark_key(0x30 + (c - '0'));
+                  else if (c == 3)                  term_mark_key(0x1B); // Ctrl+C → ESC
                   i++;
               }
           }
@@ -156,7 +167,9 @@ int input_key_held(int vk) {
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 #else
     if (vk < 0 || vk > 255) return 0;
-    return g_term_keys[vk];
+    // Key is "held" if last byte arrived within KEY_HOLD_MS
+    long long age = term_now_ms() - g_term_key_time[vk];
+    return (g_term_key_time[vk] != 0 && age < KEY_HOLD_MS);
 #endif
 }
 
