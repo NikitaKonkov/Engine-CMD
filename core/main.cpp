@@ -215,7 +215,7 @@ int main() {
     }
 
     // ── Loop ─────────────────────────────────────────────────────────────────
-    int clk = clock_create(60, "demo");
+    int clk = clock_create(144, "demo");
     const float ORBIT_R = 45.0f;
     const float ORBIT_H = 12.0f;
     float angle = 0.0f;

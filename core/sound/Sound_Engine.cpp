@@ -4,6 +4,8 @@
 // miniaudio handles: device enumeration, format conversion, audio thread,
 //                    WAV/MP3/FLAC decoding, all OS backends
 //
+#define _CRT_SECURE_NO_WARNINGS
+//
 // We handle:         asset cache, tone synthesis, mixer with FMA, sync groups
 // ═══════════════════════════════════════════════════════════════════════════════
 

@@ -124,7 +124,7 @@ MSVC_DEFINES=/DTESTING /DBEST
 #  /favor:AMD64 = optimize for AMD64
 #  /arch:SSE2   = SSE2 instructions (32-bit)
 #  /arch:AVX2   = AVX2 instructions
-MSVC_EXTRA=
+MSVC_EXTRA=/wd4244
 
 
 

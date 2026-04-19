@@ -6,6 +6,7 @@
 // out of the header.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+#define _CRT_SECURE_NO_WARNINGS
 #include "Clock_Manager.hpp"
 
 #include <chrono>
