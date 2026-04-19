@@ -1,0 +1,230 @@
+# ============================================================
+# Build Configuration
+# ============================================================
+# Lines starting with # are comments. Do not add spaces around =
+# Usage: install.bat         (64-bit)
+#        install.bat 32bit   (32-bit)
+
+
+
+# -- Compiler Toolchain ----------------------------------------
+#  msvc   = Microsoft Visual C++ (auto uses vcvars)
+#  gcc    = GCC / MinGW
+#  clang  = Clang / LLVM
+COMPILER=msvc
+
+
+
+# -- Language --------------------------------------------------
+#  c    = compile as C    (MSVC: /TC, GCC: gcc, Clang: clang)
+#  c++  = compile as C++  (MSVC: /TP, GCC: g++, Clang: clang++)
+LANGUAGE=c++
+
+
+
+# -- Compiler Path (gcc/clang only) ----------------------------
+#  Full path to compiler executable. Ignored when COMPILER=msvc.
+#  Leave empty to auto-detect from PATH.
+#  Example: C:\msys64\mingw64\bin\g++.exe
+COMPILER_PATH=
+
+
+
+# -- MSVC Paths (auto-detected, used when COMPILER=msvc) -------
+VCVARS32=C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Auxiliary\Build\vcvars32.bat
+VCVARS64=C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Auxiliary\Build\vcvars64.bat
+
+
+
+# -- Source Files -----------------------------------------------
+#  Specific .cpp/.c files to compile (space-separated)
+#  Example: TRAINING\poly.cpp CHAPTER_1\cpC.cpp
+SOURCE_FILES=
+
+
+
+# -- Source Folders ---------------------------------------------
+#  Auto-compile ALL .cpp/.c files found in these folders
+#  (space-separated folder names, non-recursive)
+SOURCE_FOLDERS=core core\console core\input core\clock core\sound core\render core\render\tinyrenderer-master
+
+
+
+# -- Run Target -------------------------------------------------
+#  Exe to auto-run when everything is up to date (from exe folder)
+#  Leave empty to just print "up to date"
+RUN_TARGET=main.exe
+
+
+
+
+# ============================================================
+#  MSVC FLAGS  (used when COMPILER=msvc)
+# ============================================================
+
+
+# -- Optimization -----------------------------------------------
+#  /O1  = minimize size          /O2  = maximize speed
+#  /Od  = disable (debug)         /Ox  = full optimization
+#  /Ob2 = inline expansion        /Oi  = enable intrinsics
+MSVC_OPTIMIZATION=/O2
+
+
+
+# -- Language Standard ------------------------------------------
+#  C:   /std:c11   /std:c17
+#  C++: /std:c++14  /std:c++17  /std:c++20  /std:c++latest
+MSVC_STANDARD=/std:c++17
+
+
+
+# -- Exception Handling -----------------------------------------
+#  /EHsc = C++ only   /EHa = C++ + SEH   (empty = none)
+MSVC_EXCEPTIONS=/EHsc
+
+
+
+# -- Floating Point ---------------------------------------------
+#  /fp:fast  /fp:precise  /fp:strict
+MSVC_FLOATING_POINT=/fp:fast
+
+
+
+# -- Runtime Library --------------------------------------------
+#  /MD  = DLL release    /MDd = DLL debug
+#  /MT  = static release /MTd = static debug
+MSVC_RUNTIME=/MD
+
+
+
+# -- Warning Level ----------------------------------------------
+#  /W0=off  /W1  /W2  /W3  /W4=max  /Wall=all  /WX=errors
+MSVC_WARNINGS=/W3
+
+
+
+# -- Debug Info -------------------------------------------------
+#  /Zi = PDB debug   /Z7 = embedded   (empty = none)
+MSVC_DEBUG=
+
+
+
+# -- Preprocessor Defines ---------------------------------------
+#  Space-separated: /DTESTING /DBEST /DNDEBUG /DUNICODE
+MSVC_DEFINES=/DTESTING /DBEST
+
+
+
+# -- Extra Compiler Flags ---------------------------------------
+#  Any additional cl.exe flags
+#  /GS-         = disable buffer security check
+#  /Gs          = control stack probes
+#  /Gy          = function-level linking
+#  /GL          = whole program optimization
+#  /favor:AMD64 = optimize for AMD64
+#  /arch:SSE2   = SSE2 instructions (32-bit)
+#  /arch:AVX2   = AVX2 instructions
+MSVC_EXTRA=
+
+
+
+# -- Subsystem --------------------------------------------------
+#  CONSOLE  WINDOWS  (empty = linker default)
+MSVC_SUBSYSTEM=CONSOLE
+
+
+
+# -- Entry Point ------------------------------------------------
+#  Custom entry (skips CRT startup). Leave empty for default.
+#  Examples: main  wmain  WinMain  wWinMain
+#  WARNING: custom entry skips CRT init (no printf, new, etc.)
+MSVC_ENTRY=
+
+
+
+# -- Linker Libraries -------------------------------------------
+#  Space-separated .lib files to link
+#  kernel32.lib  user32.lib  gdi32.lib   shell32.lib
+#  advapi32.lib  ole32.lib   ws2_32.lib  ntdll.lib
+MSVC_LIBS=user32.lib
+
+
+
+# -- Extra Linker Flags -----------------------------------------
+#  /DEBUG           = generate debug info
+#  /LTCG            = link-time code generation
+#  /OPT:REF         = remove unreferenced functions
+#  /OPT:ICF         = fold identical COMDATs
+#  /MANIFEST:NO     = no manifest file
+#  /DYNAMICBASE:NO  = disable ASLR
+#  /NXCOMPAT:NO     = disable DEP
+MSVC_EXTRA_LINK=
+
+
+
+
+# ============================================================
+#  GCC / CLANG FLAGS  (used when COMPILER=gcc or clang)
+# ============================================================
+
+
+# -- Optimization -----------------------------------------------
+#  -O0=none  -O1=some  -O2=default  -O3=aggressive
+#  -Os=size  -Ofast=fast  -Og=debug-friendly
+GCC_OPTIMIZATION=-O2
+
+
+
+# -- Language Standard ------------------------------------------
+#  C:   -std=c11  -std=c17  -std=c23  -std=gnu17
+#  C++: -std=c++14  -std=c++17  -std=c++20  -std=c++23  -std=gnu++17
+GCC_STANDARD=-std=c++17
+
+
+
+# -- Warnings ---------------------------------------------------
+#  -Wall         = common warnings
+#  -Wextra       = extra warnings
+#  -Wpedantic    = strict ISO compliance
+#  -Werror       = treat warnings as errors
+GCC_WARNINGS=-Wall -Wextra
+
+
+
+# -- Debug Info -------------------------------------------------
+#  -g   = debug symbols   -g0 = none   -g3 = max debug
+GCC_DEBUG=
+
+
+
+# -- Preprocessor Defines ---------------------------------------
+#  Space-separated: -DTESTING -DBEST -DNDEBUG
+GCC_DEFINES=-DTESTING -DBEST
+
+
+
+# -- Extra Compiler Flags ---------------------------------------
+#  -fno-exceptions      = disable C++ exceptions
+#  -fno-rtti            = disable RTTI
+#  -nostartfiles        = skip CRT startup (minimal binary)
+#  -fstack-protector    = stack canary
+#  -march=native        = optimize for current CPU
+#  -masm=intel          = use Intel asm syntax
+GCC_EXTRA=
+
+
+
+# -- Linker Libraries -------------------------------------------
+#  Space-separated: -lkernel32  -luser32  -lgdi32  -lws2_32
+GCC_LIBS=-lkernel32
+
+
+
+# -- Extra Linker Flags -----------------------------------------
+#  -s                   = strip symbols (smaller binary)
+#  -static              = static linking
+#  -mconsole            = console subsystem
+#  -mwindows            = windows subsystem (no console)
+#  -Wl,--entry,main     = custom entry point
+#  -nostdlib            = no standard library
+GCC_EXTRA_LINK=
