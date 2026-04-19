@@ -10,6 +10,10 @@
 #include <string.h>
 #include <stdio.h>
 
+#if !defined(_WIN32)
+  #include <unistd.h>   // write(), STDOUT_FILENO
+#endif
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -673,15 +677,32 @@ void render_present(int cam_id) {
     if (!c) return;
 
     // Allocate output buffer: worst case ~30 bytes per changed pixel
-    int max_bytes = c->buf_w * c->buf_h * 30;
+    // +32 bytes for sync markers
+    int max_bytes = c->buf_w * c->buf_h * 30 + 32;
     if (max_bytes < 4096) max_bytes = 4096;
 
     char* buf = (char*)malloc(max_bytes);
     if (!buf) return;
 
-    int len = render_diff(cam_id, buf, max_bytes);
-    if (len > 0) {
+    // Begin synchronized output (DEC private mode 2026):
+    // Terminal holds all rendering until the end marker, preventing tearing.
+    int pos = 0;
+    pos += snprintf(buf + pos, max_bytes - pos, "\x1b[?2026h");
+
+    int len = render_diff(cam_id, buf + pos, max_bytes - pos);
+    pos += len;
+
+    // End synchronized output — terminal paints the whole frame at once
+    pos += snprintf(buf + pos, max_bytes - pos, "\x1b[?2026l");
+
+    if (pos > 0) {
+#if defined(_WIN32)
         con_print(buf);
+#else
+        // Bypass stdio buffering — single write() syscall for minimal tearing
+        fflush(stdout);
+        write(STDOUT_FILENO, buf, pos);
+#endif
     }
 
     free(buf);
