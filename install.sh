@@ -13,8 +13,8 @@ if [[ "${1,,}" == "32bit" ]]; then
     ARCH="32"
 fi
 
-CONFIG_FILE="installer_config.txt"
-HASH_FILE="object_hashes.txt"
+CONFIG_FILE="installer_config_linux.txt"
+HASH_FILE="object_hashes_linux.txt"
 BIN_DIR="bin${ARCH}"
 EXE_DIR="exe${ARCH}"
 
