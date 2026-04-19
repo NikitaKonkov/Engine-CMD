@@ -58,7 +58,8 @@
 // ── Detect X11 availability at compile time ─────────────────────────────────
 // If X11 headers are not found, fall back to terminal (termios) input.
 // To force terminal mode even with X11 installed, define INPUT_NO_X11.
-#elif !defined(INPUT_NO_X11) && __has_include(<X11/Xlib.h>)
+// Check X11/X.h too — some systems (Termux) ship Xlib.h but lack transitive deps.
+#elif !defined(INPUT_NO_X11) && __has_include(<X11/Xlib.h>) && __has_include(<X11/X.h>)
   #define INPUT_USE_X11
   #include <X11/Xlib.h>
   #include <X11/keysym.h>
