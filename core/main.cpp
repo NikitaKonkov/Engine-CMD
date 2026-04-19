@@ -283,7 +283,7 @@ int main() {
 
         // ── Vertical: Space = up, Ctrl = down ───────────────────────────
         if (input_key_held(VK_SPACE_))   cam_y += MOVE_SPEED;
-        if (input_key_held(VK_CONTROL_)) cam_y -= MOVE_SPEED;
+        if (input_key_held(VK_SHIFT_)) cam_y -= MOVE_SPEED;
 
         cam_set_position(cam, cam_x, cam_y, cam_z);
         cam_set_rotation(cam, cam_yaw, cam_pitch, 0.0f);
@@ -297,7 +297,7 @@ int main() {
         // HUD
         Camera* c = cam_get(cam);
         con_move(1, 1);
-        con_printf(COL_BR_YELLOW "cam(%.0f,%.0f,%.0f) yaw=%.2f  WASD=move QE=turn SPACE/CTRL=up/down  ESC=quit" COL_RESET,
+        con_printf(COL_BR_YELLOW "cam(%.0f,%.0f,%.0f) yaw=%.2f  WASD=move QE=turn SPACE/SHIFT=up/down  ESC=quit" COL_RESET,
                    c->pos.x, c->pos.y, c->pos.z, c->yaw);
 
         render_present(cam);  // diff front vs back → ANSI output → swap

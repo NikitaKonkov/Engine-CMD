@@ -63,12 +63,25 @@
   #include <sys/ioctl.h>
   #include <sys/time.h>
 
-  // Async-style key state: each key has a timestamp of the last byte received.
-  // A key is considered "held" if its timestamp is within KEY_HOLD_MS of now.
-  // Terminal key repeat sends at ~30ms intervals, so 120ms catches gaps.
-  #define KEY_HOLD_MS 120
+  // Async-style key state using timestamps to simulate key-up detection.
+  //
+  // Problem: terminals only repeat ONE key at a time, and have a ~250ms
+  // initial delay before repeat starts.  Two timeouts work together:
+  //
+  // KEY_HOLD_MS  — how long a single key stays "held" after its last byte.
+  //                Must be > terminal repeat delay (~250ms) so the key
+  //                doesn't flicker off before repeat kicks in.
+  //
+  // KEY_COMBO_MS — how long a key stays alive while OTHER keys are still
+  //                flowing.  Solves W+D: terminal repeats only D, but W
+  //                stays alive because we see D bytes arriving.
+  //
+  #define KEY_HOLD_MS    350   // single-key timeout (> 250ms repeat delay)
+  #define KEY_COMBO_MS   600   // multi-key timeout while input is active
+  #define KEY_ACTIVE_MS   80   // "input is flowing" if any byte within this window
 
   static long long g_term_key_time[256] = {0};  // last-seen timestamp per VK (ms)
+  static long long g_term_last_any = 0;          // last time ANY input arrived
   static int g_term_init = 0;
   static struct termios g_orig_termios;
 
@@ -79,8 +92,11 @@
   }
 
   static void term_mark_key(int vk) {
-      if (vk >= 0 && vk <= 255)
-          g_term_key_time[vk] = term_now_ms();
+      if (vk >= 0 && vk <= 255) {
+          long long now = term_now_ms();
+          g_term_key_time[vk] = now;
+          g_term_last_any = now;
+      }
   }
 
   static void term_input_init(void) {
@@ -167,9 +183,19 @@ int input_key_held(int vk) {
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 #else
     if (vk < 0 || vk > 255) return 0;
-    // Key is "held" if last byte arrived within KEY_HOLD_MS
-    long long age = term_now_ms() - g_term_key_time[vk];
-    return (g_term_key_time[vk] != 0 && age < KEY_HOLD_MS);
+    if (g_term_key_time[vk] == 0) return 0;
+
+    long long now = term_now_ms();
+    long long key_age   = now - g_term_key_time[vk];
+    long long input_age = now - g_term_last_any;
+
+    // Key is held if:
+    // 1) It was seen within KEY_HOLD_MS (covers initial repeat delay), OR
+    // 2) It was seen within KEY_COMBO_MS AND other input is still flowing
+    //    (keeps W alive while D is repeating)
+    if (key_age < KEY_HOLD_MS) return 1;
+    if (key_age < KEY_COMBO_MS && input_age < KEY_ACTIVE_MS) return 1;
+    return 0;
 #endif
 }
 
