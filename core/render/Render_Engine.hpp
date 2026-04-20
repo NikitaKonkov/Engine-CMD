@@ -33,11 +33,17 @@ Vec3f vec3f_normalize(Vec3f v);
 
 // ─── Pixel ───────────────────────────────────────────────────────────────────
 
+// Color modes for ANSI output
+#define RENDER_COLOR_16    0   // \x1b[<n>m          (16-color, codes 30-97)
+#define RENDER_COLOR_256   1   // \x1b[38;5;<n>m     (256-color palette)
+#define RENDER_COLOR_24BIT 2   // \x1b[38;2;<r>;<g>;<b>m (24-bit truecolor)
+
 struct Pixel {
-    char  ascii;       // character to draw
-    int   color;       // ANSI color code (31 = red, 32 = green, …)
-    float depth;       // Z-buffer value  (lower = closer)
-    int   valid;       // 1 if occupied, 0 if empty
+    char          ascii;  // character to draw
+    int           color;  // ANSI 16-color code (31 = red, 32 = green, …)
+    unsigned char r, g, b; // RGB for 256/24-bit modes
+    float         depth;  // Z-buffer value  (lower = closer)
+    int           valid;  // 1 if occupied, 0 if empty
 };
 
 // ─── Primitives ──────────────────────────────────────────────────────────────
@@ -181,7 +187,12 @@ void  cam_swap      (int id);
 
 // Write a pixel into the camera's front buffer with Z-test.
 // Returns 1 if the pixel was written, 0 if it was occluded or out of bounds.
-int   cam_set_pixel (int id, int x, int y, char ascii, int color, float depth);
+int   cam_set_pixel     (int id, int x, int y, char ascii, int color, float depth);
+
+// Same as cam_set_pixel but also stores RGB for 256/24-bit color modes.
+int   cam_set_pixel_rgb (int id, int x, int y, char ascii, int color,
+                         unsigned char r, unsigned char g, unsigned char b,
+                         float depth);
 
 // Project a world-space point through this camera's view + perspective.
 // Returns screen-space {x, y, depth}.  depth < near_plane means behind camera.
@@ -202,6 +213,18 @@ void draw_edge (REdge e);
 // If the face has a texture, perspective-correct UV interpolation is used.
 void draw_face (RFace f);
 
+// ─── Lighting Callback ──────────────────────────────────────────────────────
+// The rasterizer calls this (if set) for each face pixel to compute lighting.
+// Only faces use this — dots and edges are fully excluded from lighting.
+//
+// Arguments: world_pos, face_normal, base_r/g/b → writes lit_r/g/b.
+// Set to NULL to disable lighting entirely.
+typedef void (*RenderLightFn)(Vec3f world_pos, Vec3f normal,
+                              float base_r, float base_g, float base_b,
+                              float* out_r, float* out_g, float* out_b);
+
+void render_set_light_fn(RenderLightFn fn);
+
 // ─── Render Output ───────────────────────────────────────────────────────────
 
 // Build a diff string comparing front vs back.  Only changed pixels produce
@@ -212,5 +235,20 @@ int  render_diff    (int cam_id, char* out, int out_size);
 // Convenience: render_diff → con_print → cam_swap, all in one call.
 // Requires Console_Manager to be initialized.
 void render_present (int cam_id);
+
+// ─── Color Mode ──────────────────────────────────────────────────────────────
+
+// Set/get the global color mode (RENDER_COLOR_16 / 256 / 24BIT).
+void render_set_color_mode(int mode);
+int  render_get_color_mode(void);
+
+// Cycle to the next color mode (16 → 256 → 24bit → 16 …).
+void render_cycle_color_mode(void);
+
+// Convert an ANSI 16-color code to RGB.
+void render_ansi16_to_rgb(int code, unsigned char* r, unsigned char* g, unsigned char* b);
+
+// Convert RGB to the nearest 256-color palette index.
+int  render_rgb_to_256(unsigned char r, unsigned char g, unsigned char b);
 
 #endif // RENDER_ENGINE_HPP

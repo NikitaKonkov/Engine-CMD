@@ -34,6 +34,105 @@ static void pool_init(void) {
     pool_ready = 1;
 }
 
+// ─── Color Mode ──────────────────────────────────────────────────────────────
+
+static int g_color_mode = RENDER_COLOR_16;  // default: classic 16-color
+
+// ─── Lighting Callback ──────────────────────────────────────────────────────
+
+static RenderLightFn g_light_fn = NULL;
+
+void render_set_light_fn(RenderLightFn fn) {
+    g_light_fn = fn;
+}
+
+void render_set_color_mode(int mode) {
+    if (mode < 0 || mode > 2) return;
+    g_color_mode = mode;
+}
+
+int render_get_color_mode(void) {
+    return g_color_mode;
+}
+
+void render_cycle_color_mode(void) {
+    g_color_mode = (g_color_mode + 1) % 3;
+    // Force full redraw by invalidating all back buffers
+    for (int i = 0; i < RENDER_MAX_CAMERAS; i++) {
+        if (cameras[i].id >= 0 && cameras[i].back) {
+            int count = cameras[i].buf_w * cameras[i].buf_h;
+            for (int j = 0; j < count; j++) {
+                cameras[i].back[j].valid = 0;
+                cameras[i].back[j].depth = 1e30f;
+            }
+        }
+    }
+}
+
+// ANSI 16-color code → RGB lookup (same table as main.cpp's rgb_to_ansi)
+static const unsigned char g_ansi16_rgb[][3] = {
+    {  0,  0,  0}, // 30 black
+    {170,  0,  0}, // 31 red
+    {  0,170,  0}, // 32 green
+    {170, 85,  0}, // 33 brown
+    {  0,  0,170}, // 34 blue
+    {170,  0,170}, // 35 magenta
+    {  0,170,170}, // 36 cyan
+    {170,170,170}, // 37 light gray
+    { 85, 85, 85}, // 90 dark gray
+    {255, 85, 85}, // 91 bright red
+    { 85,255, 85}, // 92 bright green
+    {255,255, 85}, // 93 bright yellow
+    { 85, 85,255}, // 94 bright blue
+    {255, 85,255}, // 95 bright magenta
+    { 85,255,255}, // 96 bright cyan
+    {255,255,255}, // 97 bright white
+};
+
+void render_ansi16_to_rgb(int code, unsigned char* r, unsigned char* g, unsigned char* b) {
+    int idx = -1;
+    if (code >= 30 && code <= 37) idx = code - 30;
+    else if (code >= 90 && code <= 97) idx = code - 90 + 8;
+    if (idx >= 0 && idx < 16) {
+        *r = g_ansi16_rgb[idx][0];
+        *g = g_ansi16_rgb[idx][1];
+        *b = g_ansi16_rgb[idx][2];
+    } else {
+        *r = 170; *g = 170; *b = 170;  // fallback gray
+    }
+}
+
+// Reverse map: find the nearest ANSI 16-color code for a given RGB.
+static int render_rgb_to_ansi16(unsigned char r, unsigned char g, unsigned char b) {
+    int best = 37;  // default: light gray
+    int best_dist = INT_MAX;
+    for (int i = 0; i < 16; i++) {
+        int dr = (int)r - g_ansi16_rgb[i][0];
+        int dg = (int)g - g_ansi16_rgb[i][1];
+        int db = (int)b - g_ansi16_rgb[i][2];
+        int d  = dr * dr + dg * dg + db * db;
+        if (d < best_dist) {
+            best_dist = d;
+            best = (i < 8) ? (30 + i) : (90 + i - 8);
+        }
+    }
+    return best;
+}
+
+int render_rgb_to_256(unsigned char r, unsigned char g, unsigned char b) {
+    // Check if it's close enough to a grayscale ramp (232-255)
+    if (r == g && g == b) {
+        if (r < 8) return 16;   // black
+        if (r > 248) return 231; // white
+        return 232 + (int)((r - 8.0f) / 247.0f * 23.0f + 0.5f);
+    }
+    // Map to the 6×6×6 color cube (indices 16-231)
+    int ri = (int)(r / 255.0f * 5.0f + 0.5f);
+    int gi = (int)(g / 255.0f * 5.0f + 0.5f);
+    int bi = (int)(b / 255.0f * 5.0f + 0.5f);
+    return 16 + 36 * ri + 6 * gi + bi;
+}
+
 // ─── Vec3f ───────────────────────────────────────────────────────────────────
 
 Vec2f vec2f_make(float u, float v) {
@@ -389,6 +488,9 @@ void cam_swap(int id) {
     for (int i = 0; i < count; i++) {
         c->front[i].valid = 0;
         c->front[i].depth = 1e30f;
+        c->front[i].r = 0;
+        c->front[i].g = 0;
+        c->front[i].b = 0;
     }
 }
 
@@ -404,6 +506,31 @@ int cam_set_pixel(int id, int x, int y, char ascii, int color, float depth) {
     if (!p->valid || depth < p->depth) {
         p->ascii = ascii;
         p->color = color;
+        p->depth = depth;
+        p->valid = 1;
+        // Derive RGB from the ANSI 16-color code
+        render_ansi16_to_rgb(color, &p->r, &p->g, &p->b);
+        return 1;
+    }
+    return 0;
+}
+
+int cam_set_pixel_rgb(int id, int x, int y, char ascii, int color,
+                      unsigned char r, unsigned char g, unsigned char b,
+                      float depth) {
+    Camera* c = cam_get(id);
+    if (!c) return 0;
+    if (x < 0 || y < 0 || x >= c->buf_w || y >= c->buf_h) return 0;
+
+    int idx = y * c->buf_w + x;
+    Pixel* p = &c->front[idx];
+
+    if (!p->valid || depth < p->depth) {
+        p->ascii = ascii;
+        p->color = color;
+        p->r = r;
+        p->g = g;
+        p->b = b;
         p->depth = depth;
         p->valid = 1;
         return 1;
@@ -581,9 +708,13 @@ void draw_edge(REdge e) {
 }
 
 // Internal: rasterize a single triangle (3 projected screen verts + depths).
+// wp0/wp1/wp2 = world-space positions for lighting interpolation.
+// face_normal  = face normal for diffuse lighting.
 // Shared by draw_face.
 static void rasterize_triangle(int cid, Camera* c,
     Vec3f sp0, Vec3f sp1, Vec3f sp2,   // screen-space {x, y, camZ}
+    Vec3f wp0, Vec3f wp1, Vec3f wp2,   // world-space positions (for lighting)
+    Vec3f face_normal,                  // face normal (for lighting)
     Vec2f uv0, Vec2f uv1, Vec2f uv2,
     int* texture, int tex_w, int tex_h,
     int flat_color, char ascii)
@@ -612,6 +743,9 @@ static void rasterize_triangle(int cid, Camera* c,
 
     float inv_area = 1.0f / area;
 
+    // Pre-check if lighting is enabled
+    int use_lighting = (g_light_fn != NULL);
+
     for (int y = min_y; y <= max_y; y++) {
         for (int x = min_x; x <= max_x; x++) {
             // Barycentric coordinates
@@ -621,18 +755,20 @@ static void rasterize_triangle(int cid, Camera* c,
 
             if (l0 < 0 || l1 < 0 || l2 < 0) continue;
 
-            // Perspective-correct depth
+            // Perspective-correct weights
             float w_interp = l0 * w0 + l1 * w1 + l2 * w2;
             float depth = 1.0f / w_interp;
 
-            int pixel_color = flat_color;
+            float pc0 = (l0 * w0) / w_interp;
+            float pc1 = (l1 * w1) / w_interp;
+            float pc2 = (l2 * w2) / w_interp;
+
+            // Base pixel color (before lighting)
+            unsigned char base_r, base_g, base_b;
+            int pixel_ansi = flat_color;
 
             // Perspective-correct texture mapping
             if (texture && tex_w > 0 && tex_h > 0) {
-                float pc0 = (l0 * w0) / w_interp;
-                float pc1 = (l1 * w1) / w_interp;
-                float pc2 = (l2 * w2) / w_interp;
-
                 float u = pc0 * uv0.u + pc1 * uv1.u + pc2 * uv2.u;
                 float v = pc0 * uv0.v + pc1 * uv1.v + pc2 * uv2.v;
 
@@ -641,10 +777,40 @@ static void rasterize_triangle(int cid, Camera* c,
 
                 int tx = clamp_i((int)(u * tex_w), 0, tex_w - 1);
                 int ty = clamp_i((int)(v * tex_h), 0, tex_h - 1);
-                pixel_color = texture[ty * tex_w + tx];
+                int texel = texture[ty * tex_w + tx];
+
+                base_r = (unsigned char)((texel >> 16) & 0xFF);
+                base_g = (unsigned char)((texel >> 8) & 0xFF);
+                base_b = (unsigned char)(texel & 0xFF);
+                pixel_ansi = (texel >> 24) & 0xFF;
+                if (pixel_ansi == 0) pixel_ansi = flat_color;
+            } else {
+                render_ansi16_to_rgb(flat_color, &base_r, &base_g, &base_b);
             }
 
-            cam_set_pixel(cid, x, y, ascii, pixel_color, depth);
+            // Apply lighting if enabled
+            if (use_lighting) {
+                // Interpolate world position (perspective-correct)
+                Vec3f world_pos;
+                world_pos.x = pc0 * wp0.x + pc1 * wp1.x + pc2 * wp2.x;
+                world_pos.y = pc0 * wp0.y + pc1 * wp1.y + pc2 * wp2.y;
+                world_pos.z = pc0 * wp0.z + pc1 * wp1.z + pc2 * wp2.z;
+
+                float lit_r, lit_g, lit_b;
+                g_light_fn(world_pos, face_normal,
+                           (float)base_r, (float)base_g, (float)base_b,
+                           &lit_r, &lit_g, &lit_b);
+
+                base_r = (unsigned char)(lit_r < 0 ? 0 : (lit_r > 255 ? 255 : lit_r));
+                base_g = (unsigned char)(lit_g < 0 ? 0 : (lit_g > 255 ? 255 : lit_g));
+                base_b = (unsigned char)(lit_b < 0 ? 0 : (lit_b > 255 ? 255 : lit_b));
+
+                // Update ANSI-16 code to match the lit RGB so 16-color mode reflects lighting
+                pixel_ansi = render_rgb_to_ansi16(base_r, base_g, base_b);
+            }
+
+            cam_set_pixel_rgb(cid, x, y, ascii, pixel_ansi,
+                              base_r, base_g, base_b, depth);
         }
     }
 }
@@ -661,6 +827,11 @@ void draw_face(RFace f) {
 
     // Auto-update cache if dirty
     if (c->cache_dirty) cam_update(cid);
+
+    // Recompute face normal from world-space verts (entity may have rotated them)
+    Vec3f fn_e1 = vec3f_sub(f.verts[1], f.verts[0]);
+    Vec3f fn_e2 = vec3f_sub(f.verts[2], f.verts[0]);
+    Vec3f face_n = vec3f_normalize(vec3f_cross(fn_e1, fn_e2));
 
     // Transform all 3 vertices to view (camera) space
     Vec3f vs[3];
@@ -689,6 +860,7 @@ void draw_face(RFace f) {
 
         rasterize_triangle(cid, c,
             sp[0], sp[1], sp[2],
+            f.verts[0], f.verts[1], f.verts[2], face_n,
             f.uvs[0], f.uvs[1], f.uvs[2],
             f.texture, f.tex_w, f.tex_h,
             f.color, f.ascii);
@@ -714,12 +886,17 @@ void draw_face(RFace f) {
         Vec2f uv_c0 = lerp_uv(f.uvs[bi0], f.uvs[fi], t0);
         Vec2f uv_c1 = lerp_uv(f.uvs[bi1], f.uvs[fi], t1);
 
+        // Interpolate world positions at clip points
+        Vec3f wc0 = vec3f_add(f.verts[bi0], vec3f_scale(vec3f_sub(f.verts[fi], f.verts[bi0]), t0));
+        Vec3f wc1 = vec3f_add(f.verts[bi1], vec3f_scale(vec3f_sub(f.verts[fi], f.verts[bi1]), t1));
+
         Vec3f sp_f  = cam_project_view(c, vs[fi]);
         Vec3f sp_c0 = cam_project_view(c, c0);
         Vec3f sp_c1 = cam_project_view(c, c1);
 
         rasterize_triangle(cid, c,
             sp_f, sp_c0, sp_c1,
+            f.verts[fi], wc0, wc1, face_n,
             f.uvs[fi], uv_c0, uv_c1,
             f.texture, f.tex_w, f.tex_h,
             f.color, f.ascii);
@@ -739,6 +916,10 @@ void draw_face(RFace f) {
         Vec2f uv_c0 = lerp_uv(f.uvs[bi], f.uvs[fi0], t0);
         Vec2f uv_c1 = lerp_uv(f.uvs[bi], f.uvs[fi1], t1);
 
+        // Interpolate world positions at clip points
+        Vec3f wc0 = vec3f_add(f.verts[bi], vec3f_scale(vec3f_sub(f.verts[fi0], f.verts[bi]), t0));
+        Vec3f wc1 = vec3f_add(f.verts[bi], vec3f_scale(vec3f_sub(f.verts[fi1], f.verts[bi]), t1));
+
         Vec3f sp_f0 = cam_project_view(c, vs[fi0]);
         Vec3f sp_f1 = cam_project_view(c, vs[fi1]);
         Vec3f sp_c0 = cam_project_view(c, c0);
@@ -747,6 +928,7 @@ void draw_face(RFace f) {
         // Triangle 1: fi0, fi1, clip0
         rasterize_triangle(cid, c,
             sp_f0, sp_f1, sp_c0,
+            f.verts[fi0], f.verts[fi1], wc0, face_n,
             f.uvs[fi0], f.uvs[fi1], uv_c0,
             f.texture, f.tex_w, f.tex_h,
             f.color, f.ascii);
@@ -754,6 +936,7 @@ void draw_face(RFace f) {
         // Triangle 2: fi1, clip1, clip0
         rasterize_triangle(cid, c,
             sp_f1, sp_c1, sp_c0,
+            f.verts[fi1], wc1, wc0, face_n,
             f.uvs[fi1], uv_c1, uv_c0,
             f.texture, f.tex_w, f.tex_h,
             f.color, f.ascii);
@@ -769,6 +952,7 @@ int render_diff(int cam_id, char* out, int out_size) {
     int pos = 0;
     int w = c->buf_w;
     int h = c->buf_h;
+    int mode = g_color_mode;
 
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
@@ -779,17 +963,31 @@ int render_diff(int cam_id, char* out, int out_size) {
             // Only emit ANSI if this cell changed
             int changed = (cur.valid != prev.valid) ||
                           (cur.valid && (cur.ascii != prev.ascii ||
-                                        cur.color != prev.color));
+                                        cur.color != prev.color ||
+                                        cur.r != prev.r ||
+                                        cur.g != prev.g ||
+                                        cur.b != prev.b));
 
             if (!changed) continue;
 
-            // Leave room for the longest escape sequence (~30 bytes)
-            if (pos >= out_size - 40) break;
+            // Leave room for the longest escape sequence (~50 bytes for 24-bit)
+            if (pos >= out_size - 60) break;
 
             if (cur.valid) {
-                pos += snprintf(out + pos, out_size - pos,
-                    "\x1b[%d;%dH\x1b[%dm%c",
-                    y + 1, x + 1, cur.color, cur.ascii);
+                if (mode == RENDER_COLOR_24BIT) {
+                    pos += snprintf(out + pos, out_size - pos,
+                        "\x1b[%d;%dH\x1b[38;2;%d;%d;%dm%c",
+                        y + 1, x + 1, cur.r, cur.g, cur.b, cur.ascii);
+                } else if (mode == RENDER_COLOR_256) {
+                    int idx256 = render_rgb_to_256(cur.r, cur.g, cur.b);
+                    pos += snprintf(out + pos, out_size - pos,
+                        "\x1b[%d;%dH\x1b[38;5;%dm%c",
+                        y + 1, x + 1, idx256, cur.ascii);
+                } else {
+                    pos += snprintf(out + pos, out_size - pos,
+                        "\x1b[%d;%dH\x1b[%dm%c",
+                        y + 1, x + 1, cur.color, cur.ascii);
+                }
             } else {
                 pos += snprintf(out + pos, out_size - pos,
                     "\x1b[%d;%dH ", y + 1, x + 1);
@@ -805,9 +1003,9 @@ void render_present(int cam_id) {
     Camera* c = cam_get(cam_id);
     if (!c) return;
 
-    // Allocate output buffer: worst case ~30 bytes per changed pixel
+    // Allocate output buffer: worst case ~50 bytes per changed pixel (24-bit mode)
     // +32 bytes for sync markers
-    int max_bytes = c->buf_w * c->buf_h * 30 + 32;
+    int max_bytes = c->buf_w * c->buf_h * 50 + 32;
     if (max_bytes < 4096) max_bytes = 4096;
 
     char* buf = (char*)malloc(max_bytes);

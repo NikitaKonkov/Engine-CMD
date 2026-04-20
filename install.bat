@@ -208,9 +208,43 @@ REM ═════════════════════════�
 
 :DoCompile
 if /i "!TOOLCHAIN!"=="msvc" (
-    cl !CL_FLAGS! "%~1" /Fo"%~2"
+    cl !CL_FLAGS! /showIncludes "%~1" /Fo"%~2" > "%~2.build.log" 2>&1
+    set "BUILD_ERR=!errorlevel!"
+
+    REM Extract include paths to .dep file
+    type nul > "%~2.dep"
+    for /f "usebackq delims=" %%L in ("%~2.build.log") do (
+        set "LINE=%%L"
+        set "LINE_CHECK=!LINE:Note: including file:=!"
+        if not "!LINE_CHECK!"=="!LINE!" (
+            set "INC_PATH=!LINE:*including file:=!"
+            for /f "tokens=*" %%P in ("!INC_PATH!") do echo %%P>> "%~2.dep"
+        )
+    )
+
+    REM Show non-include output (compiler messages, errors)
+    findstr /V /B /C:"Note: including file:" "%~2.build.log"
+    del "%~2.build.log" >nul 2>nul
+
+    if !BUILD_ERR! neq 0 (
+        del "%~2.dep" >nul 2>nul
+        del "%~2" >nul 2>nul
+    )
 ) else (
-    "!CC!" -c !CC_FLAGS! "%~1" -o "%~2"
+    "!CC!" -c !CC_FLAGS! -MMD -MF "%~2.dep.tmp" "%~1" -o "%~2"
+    REM Convert Makefile dep format to simple one-path-per-line
+    type nul > "%~2.dep"
+    if exist "%~2.dep.tmp" (
+        for /f "usebackq delims=" %%L in ("%~2.dep.tmp") do (
+            set "DLINE=%%L"
+            if "!DLINE:~-1!"=="\" set "DLINE=!DLINE:~0,-1!"
+            for %%T in (!DLINE!) do (
+                set "TK=%%T"
+                if not "!TK:~-1!"==":" if exist "%%T" echo %%T>> "%~2.dep"
+            )
+        )
+        del "%~2.dep.tmp" >nul 2>nul
+    )
 )
 goto :eof
 
@@ -224,51 +258,74 @@ if /i "!TOOLCHAIN!"=="msvc" (
 goto :eof
 
 
+:ComputeFullHash
+REM %1 = source file, %2 = object file
+REM Sets FULL_HASH on return (source MD5 + dependency metadata MD5)
+set "CFH_SRC=%~1"
+set "CFH_DEP=%~2.dep"
+
+set "CFH_SRC_HASH="
+for /f "skip=1 delims=" %%i in ('certutil -hashfile "!CFH_SRC!" MD5 2^>nul') do (
+    if not defined CFH_SRC_HASH set "CFH_SRC_HASH=%%i"
+)
+set "CFH_SRC_HASH=!CFH_SRC_HASH: =!"
+
+set "CFH_DEP_HASH=NODEPS"
+if exist "!CFH_DEP!" (
+    type nul > "_dep_meta.tmp"
+    for /f "usebackq delims=" %%h in ("!CFH_DEP!") do (
+        if exist "%%h" (
+            for %%A in ("%%h") do echo %%~zA %%~tA>> "_dep_meta.tmp"
+        )
+    )
+    set "CFH_DEP_HASH="
+    for /f "skip=1 delims=" %%i in ('certutil -hashfile "_dep_meta.tmp" MD5 2^>nul') do (
+        if not defined CFH_DEP_HASH set "CFH_DEP_HASH=%%i"
+    )
+    set "CFH_DEP_HASH=!CFH_DEP_HASH: =!"
+    del "_dep_meta.tmp" >nul 2>nul
+)
+
+set "FULL_HASH=!CFH_SRC_HASH!_!CFH_DEP_HASH!"
+goto :eof
+
+
 :CheckAndCompile
 set "SOURCE_FILE=%~1"
 set "OBJECT_FILE=%~2"
-
-REM Derive header: .cpp -> .hpp, .c -> .h
-set "HEADER_FILE=!SOURCE_FILE:.cpp=.hpp!"
-if "!HEADER_FILE!"=="!SOURCE_FILE!" set "HEADER_FILE=!SOURCE_FILE:.c=.h!"
-
-set "SOURCE_HASH="
-for /f "skip=1 delims=" %%i in ('certutil -hashfile "!SOURCE_FILE!" MD5 2^>nul') do (
-    if not defined SOURCE_HASH set "SOURCE_HASH=%%i"
-)
-set "SOURCE_HASH=!SOURCE_HASH: =!"
-
-set "HEADER_HASH=NONE"
-if exist "!HEADER_FILE!" (
-    set "HEADER_HASH="
-    for /f "skip=1 delims=" %%i in ('certutil -hashfile "!HEADER_FILE!" MD5 2^>nul') do (
-        if not defined HEADER_HASH set "HEADER_HASH=%%i"
-    )
-    set "HEADER_HASH=!HEADER_HASH: =!"
-)
-
-set "COMBINED_HASH=!SOURCE_HASH!_!HEADER_HASH!"
+set "DEP_FILE=%~2.dep"
 
 if not exist "!OBJECT_FILE!" (
     echo [COMPILE] !SOURCE_FILE! ^(object missing^)
     call :DoCompile "!SOURCE_FILE!" "!OBJECT_FILE!"
+    call :ComputeFullHash "!SOURCE_FILE!" "!OBJECT_FILE!"
     goto :update_hash
 )
+
+if not exist "!DEP_FILE!" (
+    echo [COMPILE] !SOURCE_FILE! ^(deps missing^)
+    call :DoCompile "!SOURCE_FILE!" "!OBJECT_FILE!"
+    call :ComputeFullHash "!SOURCE_FILE!" "!OBJECT_FILE!"
+    goto :update_hash
+)
+
+call :ComputeFullHash "!SOURCE_FILE!" "!OBJECT_FILE!"
 
 set "STORED_HASH="
 for /f "tokens=2" %%a in ('findstr /C:"!TOOLCHAIN!:!ARCH!:!SOURCE_FILE!" "!HASH_FILE!" 2^>nul') do set "STORED_HASH=%%a"
 
-if "!COMBINED_HASH!"=="!STORED_HASH!" (
+if "!FULL_HASH!"=="!STORED_HASH!" (
     echo [  OK  ] !SOURCE_FILE! is up to date
     goto :eof
 )
 
 echo [COMPILE] !SOURCE_FILE! ^(changed^)
 call :DoCompile "!SOURCE_FILE!" "!OBJECT_FILE!"
+call :ComputeFullHash "!SOURCE_FILE!" "!OBJECT_FILE!"
 
 :update_hash
 findstr /V /C:"!TOOLCHAIN!:!ARCH!:!SOURCE_FILE!" "!HASH_FILE!" > "temp_hashes.txt" 2>nul
->> "temp_hashes.txt" echo !TOOLCHAIN!:!ARCH!:!SOURCE_FILE! !COMBINED_HASH!
+>> "temp_hashes.txt" echo !TOOLCHAIN!:!ARCH!:!SOURCE_FILE! !FULL_HASH!
 move /Y "temp_hashes.txt" "!HASH_FILE!" > nul
 goto :eof
 
@@ -280,30 +337,14 @@ REM ═════════════════════════�
 
 :QuickHashCheck
 set "QHC_SOURCE=%~1"
-set "QHC_HEADER=!QHC_SOURCE:.cpp=.hpp!"
-if "!QHC_HEADER!"=="!QHC_SOURCE!" set "QHC_HEADER=!QHC_SOURCE:.c=.h!"
+set "QHC_OBJ=!BIN_DIR!\%~n1.obj"
 
-set "QHC_SRC_HASH="
-for /f "skip=1 delims=" %%i in ('certutil -hashfile "!QHC_SOURCE!" MD5 2^>nul') do (
-    if not defined QHC_SRC_HASH set "QHC_SRC_HASH=%%i"
-)
-set "QHC_SRC_HASH=!QHC_SRC_HASH: =!"
-
-set "QHC_HDR_HASH=NONE"
-if exist "!QHC_HEADER!" (
-    set "QHC_HDR_HASH="
-    for /f "skip=1 delims=" %%i in ('certutil -hashfile "!QHC_HEADER!" MD5 2^>nul') do (
-        if not defined QHC_HDR_HASH set "QHC_HDR_HASH=%%i"
-    )
-    set "QHC_HDR_HASH=!QHC_HDR_HASH: =!"
-)
-
-set "QHC_COMBINED=!QHC_SRC_HASH!_!QHC_HDR_HASH!"
+call :ComputeFullHash "!QHC_SOURCE!" "!QHC_OBJ!"
 
 set "QHC_STORED="
 for /f "tokens=2" %%a in ('findstr /C:"!TOOLCHAIN!:!ARCH!:!QHC_SOURCE!" "!HASH_FILE!" 2^>nul') do set "QHC_STORED=%%a"
 
-if "!QHC_COMBINED!"=="!QHC_STORED!" exit /b 0
+if "!FULL_HASH!"=="!QHC_STORED!" exit /b 0
 exit /b 1
 
 

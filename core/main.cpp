@@ -3,6 +3,7 @@
 #include "clock/Clock_Manager.hpp"
 #include "render/Render_Engine.hpp"
 #include "render/tinyrenderer-master/model.h"
+#include "ui/UI_system.hpp"
 
 #include <stdio.h>
 #include <math.h>
@@ -15,6 +16,7 @@
 #include "render/module/Shader_Wave.h"
 #include "render/module/Shader_Rotate.h"
 #include "render/module/Shader_Splat.h"
+#include "render/module/Light.h"
 
 // Cross-platform sleep
 #if defined(_WIN32)
@@ -85,8 +87,9 @@ static int rgb_to_ansi(int r, int g, int b) {
     return codes[best];
 }
 
-// Convert a TGA diffuse texture into an int* ANSI color map (caller must free)
-static int* tga_to_ansi_texture(const TGAImage& img, int* out_w, int* out_h) {
+// Convert a TGA diffuse texture into a packed RGB+ANSI color map (caller must free)
+// Each int: bits 24-31 = ANSI 16-color code, bits 16-23 = R, 8-15 = G, 0-7 = B
+static int* tga_to_rgb_texture(const TGAImage& img, int* out_w, int* out_h) {
     int w = img.width(), h = img.height();
     *out_w = w;  *out_h = h;
     if (w == 0 || h == 0) return NULL;
@@ -95,13 +98,30 @@ static int* tga_to_ansi_texture(const TGAImage& img, int* out_w, int* out_h) {
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             TGAColor c = img.get(x, y);
-            tex[y * w + x] = rgb_to_ansi(c[2], c[1], c[0]); // TGAColor is BGRA
+            int r = c[2], g = c[1], b = c[0]; // TGAColor is BGRA
+            int ansi = rgb_to_ansi(r, g, b);
+            tex[y * w + x] = (ansi << 24) | (r << 16) | (g << 8) | b;
         }
     }
     return tex;
 }
 
 // ─── Scene builders ──────────────────────────────────────────────────────────
+
+// Plane no Texture, just a flat gray face for shadow testing (shader will darken it further)
+static void build_plane(float cx, float cy, float cz, float s,
+                         int color, RFace* out) {
+    float hs = s * 0.5f;
+    Vec3f v[4] = {
+        vec3f_make(cx-hs, cy, cz-hs),
+        vec3f_make(cx+hs, cy, cz-hs),
+        vec3f_make(cx+hs, cy, cz+hs),
+        vec3f_make(cx-hs, cy, cz+hs),
+    };
+    // Wind counter-clockwise so the face normal points UP (+Y)
+    rface_make_quad(v[0], v[3], v[2], v[1], color, '+', out);
+}
+
 
 // Solid cube: 6 quads → 12 triangles
 static void build_solid_cube(float cx, float cy, float cz, float s,
@@ -146,6 +166,11 @@ static int build_sphere_dots(float cx, float cy, float cz, float r,
 
 // (Gaussian splat helpers moved to render/modul/Shader_Splat.h)
 
+// ─── Shadow Resolution String (for UI) ────────────────────────────────────────
+
+// Global that UI_system.cpp reads each frame to display current shadow resolution
+const char* g_shadow_resolution_str = "HIGH";
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -162,6 +187,14 @@ int main() {
     cam_set_fov   (cam, 90.0f);
 
     // ── Entities ─────────────────────────────────────────────────────────────
+    // Face-Plane at the bottom - test shadow implementation (no shader, just a flat gray face)
+    int ent_plane = entity_create();
+    {
+        RFace tmp[2];
+        build_plane(0, -0.01f, -10.0f, 100, 90, tmp);
+        entity_add_faces(ent_plane, tmp, 2);
+        entity_move(ent_plane, 0.0f, -20.0f, 0.0f);
+    }
 
     // Cube at origin — rotation shader: ASCII chars change by viewing angle
     int ent_cube = entity_create();
@@ -175,8 +208,8 @@ int main() {
     // Dot sphere to the right — depth shader: chars/colors fade with distance
     int ent_sphere = entity_create();
     {
-        const int RINGS   = 12;
-        const int SECTORS = 24;
+        const int RINGS   = 12*2;
+        const int SECTORS = 24*2;
         const int NDOTS   = (RINGS + 1) * SECTORS;  // 312
         RDot tmp[NDOTS];
         int n = build_sphere_dots(0, 0, 0, 7, RINGS, SECTORS, 32, 'O', tmp);
@@ -193,7 +226,7 @@ int main() {
         std::string mdl_path = project_path("core\\render\\tinyrenderer-master\\obj\\diablo3_pose\\diablo3_pose.obj");
         Model diablo(mdl_path);
         int nfaces = diablo.nfaces();
-        ansi_tex = tga_to_ansi_texture(diablo.diffuse(), &ansi_tw, &ansi_th);
+        ansi_tex = tga_to_rgb_texture(diablo.diffuse(), &ansi_tw, &ansi_th);
 
         const float S = 15.0f;
         for (int i = 0; i < nfaces; i++) {
@@ -238,8 +271,21 @@ int main() {
     entity_set_pos(ent_splat2, -33.0f, 6.0f, 9.0f);
     shader_splat_pulse_attach(ent_splat2, 0.5f, 2.0f);
 
+    // ── Lights ────────────────────────────────────────────────────────────
+
+    // Radial white light centered above the models
+    int light0 = light_create();
+    light_set_type(light0, LIGHT_RADIAL);
+    light_set_pos(light0, 0.0f, 35.0f, 0.0f);
+    light_set_color(light0, 255, 255, 255);
+    light_set_intensity(light0, 1.8f);
+    light_set_range(light0, 200.0f);
+
+    // Register the lighting callback so the rasterizer uses it for faces
+    render_set_light_fn(light_compute_callback);
+
     // ── Loop ─────────────────────────────────────────────────────────────────
-    int clk = clock_create(60, "demo");
+    int clk = clock_create(144, "demo");
 
     // Flying camera state
     float cam_x = 0.0f, cam_y = 12.0f, cam_z = 45.0f;
@@ -265,6 +311,26 @@ int main() {
         input_poll();  // drain stdin once per frame (Linux)
         if (input_key_held(VK_ESCAPE_)) break;
         if (!clock_sync(clk)) { sleep_ms(1); continue; }
+
+        // ── Color mode toggle: ALT + C ──────────────────────────────────
+        {
+            static int alt_c_prev = 0;
+            int alt_c_now = input_keys_held(2, VK_ALT_, VK_C_);
+            if (alt_c_now && !alt_c_prev)
+                render_cycle_color_mode();
+            alt_c_prev = alt_c_now;
+        }
+
+        // ── Shadow resolution toggle: ALT + X ────────────────────────────
+        {
+            static int alt_x_prev = 0;
+            int alt_x_now = input_keys_held(2, VK_ALT_, VK_X_);
+            if (alt_x_now && !alt_x_prev) {
+                light_cycle_shadow_resolution();
+                g_shadow_resolution_str = light_get_shadow_resolution_str();
+            }
+            alt_x_prev = alt_x_now;
+        }
 
         // Resize guard
         con_get_size(&w, &h);
@@ -316,19 +382,20 @@ int main() {
         // Slowly rotate the cube to show per-entity transforms
         entity_rotate(ent_cube, 0.01f, 0.005f, 0.0f);
 
+        // Build shadow maps from all entity faces (faces only — dots/edges excluded)
+        light_build_shadows();
+
         // Draw all entities (shaders → local-to-world → draw)
         entity_draw_all(1.0f / 60.0f);
 
-        // HUD
-        Camera* c = cam_get(cam);
-        con_move(1, 1);
-        con_printf(COL_BR_YELLOW "cam(%.0f,%.0f,%.0f) yaw=%.2f  WASD=move QE=turn SPACE/SHIFT=up/down  ESC=quit" COL_RESET,
-                   c->pos.x, c->pos.y, c->pos.z, c->yaw);
+        // HUD overlay (drawn into camera buffer at depth 0)
+        ui_draw(cam, clk);
 
         render_present(cam);  // diff front vs back → ANSI output → swap
     }
 
     entity_destroy_all();
+    light_destroy_all();
     free(ansi_tex);
     cam_destroy_all();
     con_cursor_show();

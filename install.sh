@@ -162,21 +162,40 @@ file_hash() {
 
 combined_hash() {
     local src="$1"
+    local obj="$2"
     local src_hash
     src_hash=$(file_hash "$src")
 
-    # Derive header: .cpp -> .hpp, .c -> .h
-    local hdr="${src%.cpp}.hpp"
-    if [[ "$hdr" == "$src" ]]; then
-        hdr="${src%.c}.h"
+    local dep_file="${obj}.dep"
+    local dep_hash="NODEPS"
+
+    if [[ -f "$dep_file" ]]; then
+        # Parse GCC/Clang Makefile-style dep file:
+        # Join continuation lines, strip target:, extract file paths
+        local deps
+        deps=$(sed 's/\\$//' "$dep_file" | tr '\n' ' ' | sed 's/^[^:]*://' | tr -s ' ' '\n' | sed '/^$/d' | sort)
+
+        local meta=""
+        while IFS= read -r dep; do
+            [[ -z "$dep" ]] && continue
+            if [[ -f "$dep" ]]; then
+                local sz mtime
+                sz=$(stat -c %s "$dep" 2>/dev/null || stat -f %z "$dep" 2>/dev/null || echo "0")
+                mtime=$(stat -c %Y "$dep" 2>/dev/null || stat -f %m "$dep" 2>/dev/null || echo "0")
+                meta="${meta}${sz} ${mtime}\n"
+            fi
+        done <<< "$deps"
+
+        if [[ -n "$meta" ]]; then
+            if command -v md5sum &>/dev/null; then
+                dep_hash=$(printf "%b" "$meta" | md5sum | awk '{print $1}')
+            elif command -v md5 &>/dev/null; then
+                dep_hash=$(printf "%b" "$meta" | md5 -q)
+            fi
+        fi
     fi
 
-    local hdr_hash="NONE"
-    if [[ -f "$hdr" ]]; then
-        hdr_hash=$(file_hash "$hdr")
-    fi
-
-    echo "${src_hash}_${hdr_hash}"
+    echo "${src_hash}_${dep_hash}"
 }
 
 get_stored_hash() {
@@ -200,7 +219,7 @@ update_stored_hash() {
 do_compile() {
     local src="$1"
     local obj="$2"
-    $CC -c $CC_FLAGS "$src" -o "$obj"
+    $CC -c $CC_FLAGS -MMD -MP -MF "${obj}.dep" "$src" -o "$obj"
 }
 
 do_link() {
@@ -214,15 +233,23 @@ check_and_compile() {
     local obj="$2"
     local toolchain="${CFG_COMPILER:-gcc}"
     local hash_key="${toolchain}:${ARCH}:${src}"
-    local current_hash
-    current_hash=$(combined_hash "$src")
 
     if [[ ! -f "$obj" ]]; then
         echo "[COMPILE] $src (object missing)"
         do_compile "$src" "$obj"
-        update_stored_hash "$hash_key" "$current_hash"
+        update_stored_hash "$hash_key" "$(combined_hash "$src" "$obj")"
         return
     fi
+
+    if [[ ! -f "${obj}.dep" ]]; then
+        echo "[COMPILE] $src (deps missing)"
+        do_compile "$src" "$obj"
+        update_stored_hash "$hash_key" "$(combined_hash "$src" "$obj")"
+        return
+    fi
+
+    local current_hash
+    current_hash=$(combined_hash "$src" "$obj")
 
     local stored_hash
     stored_hash=$(get_stored_hash "$hash_key")
@@ -234,7 +261,7 @@ check_and_compile() {
 
     echo "[COMPILE] $src (changed)"
     do_compile "$src" "$obj"
-    update_stored_hash "$hash_key" "$current_hash"
+    update_stored_hash "$hash_key" "$(combined_hash "$src" "$obj")"
 }
 
 
@@ -253,9 +280,12 @@ quick_check_all() {
     [[ ! -f "$EXE_DIR/$link_target" ]] && return 1
 
     for src in $ALL_SOURCES; do
+        local obj_name
+        obj_name=$(basename "${src%.*}").o
+        local obj_path="$BIN_DIR/$obj_name"
         local hash_key="${toolchain}:${ARCH}:${src}"
         local current_hash
-        current_hash=$(combined_hash "$src")
+        current_hash=$(combined_hash "$src" "$obj_path")
         local stored_hash
         stored_hash=$(get_stored_hash "$hash_key")
         [[ "$current_hash" != "$stored_hash" ]] && return 1

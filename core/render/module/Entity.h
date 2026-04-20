@@ -335,4 +335,53 @@ static void entity_draw_all(float dt) {
     }
 }
 
+// ─── Shadow Pass ─────────────────────────────────────────────────────────────
+// Rasterize all entity faces (world-space) into every active light's shadow map.
+// Must be called AFTER shaders have run (entity_draw refreshes trig + runs shaders).
+// To solve: we run shaders in entity_draw, but shadow pass needs world-space faces
+// BEFORE the main camera rasterization.
+//
+// Solution: a separate pass that only refreshes transforms + rasterizes into
+// shadow maps, without drawing to the camera.
+
+// Forward declaration — implemented in Light.h (included before Entity.h usage)
+// We use a function pointer to avoid circular header dependency.
+typedef void (*ShadowRasterizeFn)(int light_id, Vec3f v0, Vec3f v1, Vec3f v2);
+
+static ShadowRasterizeFn g_shadow_rasterize_fn = NULL;
+static int  g_shadow_light_count = 0;
+static int  g_shadow_light_ids[16];
+
+static void entity_set_shadow_fn(ShadowRasterizeFn fn) {
+    g_shadow_rasterize_fn = fn;
+}
+
+static void entity_shadow_pass(void) {
+    if (!g_shadow_rasterize_fn || g_shadow_light_count <= 0) return;
+    entity_pool_ensure();
+
+    for (int ei = 0; ei < ENTITY_MAX_POOL; ei++) {
+        Entity* e = &g_entities[ei];
+        if (e->id == -1 || !e->enabled) continue;
+        if (e->face_count <= 0) continue;
+
+        // Refresh trig cache for transforms (don't run shader — already ran or will run)
+        e->cos_yaw   = cosf(e->yaw);    e->sin_yaw   = sinf(e->yaw);
+        e->cos_pitch = cosf(e->pitch);  e->sin_pitch = sinf(e->pitch);
+        e->cos_roll  = cosf(e->roll);   e->sin_roll  = sinf(e->roll);
+
+        for (int fi = 0; fi < e->face_count; fi++) {
+            RFace f = e->faces[fi];
+            Vec3f w0 = entity_local_to_world(e, f.verts[0]);
+            Vec3f w1 = entity_local_to_world(e, f.verts[1]);
+            Vec3f w2 = entity_local_to_world(e, f.verts[2]);
+
+            // Rasterize into each active light's shadow map
+            for (int li = 0; li < g_shadow_light_count; li++) {
+                g_shadow_rasterize_fn(g_shadow_light_ids[li], w0, w1, w2);
+            }
+        }
+    }
+}
+
 #endif // ENTITY_H
