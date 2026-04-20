@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <climits>
 
 #if !defined(_WIN32)
   #include <unistd.h>   // write(), STDOUT_FILENO
@@ -1028,7 +1029,7 @@ void render_present(int cam_id) {
 #else
         // Bypass stdio buffering — single write() syscall for minimal tearing
         fflush(stdout);
-        write(STDOUT_FILENO, buf, pos);
+        (void)write(STDOUT_FILENO, buf, pos);
 #endif
     }
 
