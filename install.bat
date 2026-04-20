@@ -423,7 +423,7 @@ for /f "delims=" %%f in ('dir /s /b "C:\Program Files\Microsoft Visual Studio\vc
 >> "!CF!" echo # -- Source Folders ---------------------------------------------
 >> "!CF!" echo #  Auto-compile ALL .cpp/.c files found in these folders
 >> "!CF!" echo #  (space-separated folder names, non-recursive)
->> "!CF!" echo SOURCE_FOLDERS=core core\console core\input core\clock core\sound core\render core\render\tinyrenderer-master
+>> "!CF!" echo SOURCE_FOLDERS=core core\console core\input core\clock core\sound core\render core\render\tinyrenderer-master core\ui
 >> "!CF!" echo.
 >> "!CF!" echo.
 >> "!CF!" echo.

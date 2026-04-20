@@ -1029,7 +1029,8 @@ void render_present(int cam_id) {
 #else
         // Bypass stdio buffering — single write() syscall for minimal tearing
         fflush(stdout);
-        (void)write(STDOUT_FILENO, buf, pos);
+        ssize_t wr = write(STDOUT_FILENO, buf, pos);
+        (void)wr;
 #endif
     }
 

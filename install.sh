@@ -341,7 +341,7 @@ SOURCE_FILES=
 #  Auto-compile ALL .cpp/.c files found in these folders
 #  (space-separated folder names, non-recursive)
 #  Use forward slashes on Linux.
-SOURCE_FOLDERS=core core/console core/input core/clock core/sound core/render core/render/tinyrenderer-master
+SOURCE_FOLDERS=core core/console core/input core/clock core/sound core/render core/render/tinyrenderer-master core/ui
 
 
 
