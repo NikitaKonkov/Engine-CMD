@@ -20,6 +20,7 @@
 
 // Cross-platform sleep
 #if defined(_WIN32)
+  #pragma message("Compiling for Windows")
   #include <windows.h>
   #define sleep_ms(ms) Sleep(ms)
 #else
@@ -119,7 +120,7 @@ static void build_plane(float cx, float cy, float cz, float s,
         vec3f_make(cx-hs, cy, cz+hs),
     };
     // Wind counter-clockwise so the face normal points UP (+Y)
-    rface_make_quad(v[0], v[3], v[2], v[1], color, '+', out);
+    rface_make_quad(v[0], v[3], v[2], v[1], color, (char)'#', out);
 }
 
 
@@ -169,7 +170,7 @@ static int build_sphere_dots(float cx, float cy, float cz, float r,
 // ─── Shadow Resolution String (for UI) ────────────────────────────────────────
 
 // Global that UI_system.cpp reads each frame to display current shadow resolution
-const char* g_shadow_resolution_str = "HIGH";
+const char* g_shadow_resolution_str = "SUPERHOT";
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
@@ -188,12 +189,24 @@ int main() {
 
     // ── Entities ─────────────────────────────────────────────────────────────
     // Face-Plane at the bottom - test shadow implementation (no shader, just a flat gray face)
+
+    // Verticall plane next to the models - test camera buffer display on plane
+    int cam_plane = entity_create();
+    {
+        RFace tmp[2];
+        build_plane(0, 0.00f, 0.0f, 100, 90, tmp);
+        entity_rotate(cam_plane, 0.0f, 5.0f, 0.0f); // rotate to show perspective
+        entity_add_faces(cam_plane, tmp, 2);
+        entity_move(cam_plane, 0.0f, 0.0f, 0.0f);
+    }
+
+    // Horizontal plane at the bottom - test shadow implementation (no shader, just a flat gray face)
     int ent_plane = entity_create();
     {
         RFace tmp[2];
         build_plane(0, -0.01f, -10.0f, 100, 90, tmp);
         entity_add_faces(ent_plane, tmp, 2);
-        entity_move(ent_plane, 0.0f, -20.0f, 0.0f);
+        entity_move(ent_plane, 0.0f, -10.0f, 0.0f);
     }
 
     // Cube at origin — rotation shader: ASCII chars change by viewing angle
@@ -287,6 +300,9 @@ int main() {
     // ── Loop ─────────────────────────────────────────────────────────────────
     int clk = clock_create(144, "demo");
 
+    // Entity rotation and movement state
+    float ent_yaw = 0.0f, ent_pitch = 0.0f, ent_x = 0.0f, ent_y = 0.0f, ent_z = 0.0f;
+
     // Flying camera state
     float cam_x = 0.0f, cam_y = 12.0f, cam_z = 45.0f;
     float cam_yaw = PI, cam_pitch = 0.0f;
@@ -378,6 +394,21 @@ int main() {
         cam_set_position(cam, cam_x, cam_y, cam_z);
         cam_set_rotation(cam, cam_yaw, cam_pitch, 0.0f);
         cam_update(cam);
+
+
+
+        // Rotate and Move Entity by arrow keys (test per-entity transform independent of camera)
+        if (input_key_held(VK_NUMPAD4)) entity_move(cam_plane, -MOVE_SPEED, 0.0f, 0.0f);
+        if (input_key_held(VK_NUMPAD6)) entity_move(cam_plane, MOVE_SPEED, 0.0f, 0.0f);
+        if (input_key_held(VK_NUMPAD8)) entity_move(cam_plane, 0.0f, 0.0f, -MOVE_SPEED);
+        if (input_key_held(VK_NUMPAD2)) entity_move(cam_plane, 0.0f, 0.0f, MOVE_SPEED);
+        
+        if (input_key_held(VK_NUMPAD7)) entity_rotate(cam_plane, 0.0f, -TURN_SPEED, 0.0f);
+        if (input_key_held(VK_NUMPAD9)) entity_rotate(cam_plane, 0.0f, TURN_SPEED, 0.0f);
+        if (input_key_held(VK_NUMPAD1)) entity_rotate(cam_plane, -TURN_SPEED, 0.0f, 0.0f);
+        if (input_key_held(VK_NUMPAD3)) entity_rotate(cam_plane, TURN_SPEED, 0.0f, 0.0f);
+
+
 
         // Slowly rotate the cube to show per-entity transforms
         entity_rotate(ent_cube, 0.01f, 0.005f, 0.0f);

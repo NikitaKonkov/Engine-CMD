@@ -470,7 +470,7 @@ for /f "delims=" %%f in ('dir /s /b "C:\Program Files\Microsoft Visual Studio\vc
 >> "!CF!" echo # -- Runtime Library --------------------------------------------
 >> "!CF!" echo #  /MD  = DLL release    /MDd = DLL debug
 >> "!CF!" echo #  /MT  = static release /MTd = static debug
->> "!CF!" echo MSVC_RUNTIME=/MD
+>> "!CF!" echo MSVC_RUNTIME=/MT
 >> "!CF!" echo.
 >> "!CF!" echo.
 >> "!CF!" echo.

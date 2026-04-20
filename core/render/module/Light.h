@@ -46,19 +46,20 @@
 // ─── Dynamic Shadow Resolution ────────────────────────────────────────────────
 // Global shadow map dimensions (can be changed dynamically with cycle function)
 
-static int g_shadow_cube_size   = 128;  // per-face for radial (128, 64, 32)
-static int g_shadow_map_w       = 128;  // for focused (128, 64, 32)
-static int g_shadow_map_h       = 64;
+static int g_shadow_cube_size   = 512;  // per-face for radial (128, 64, 32)
+static int g_shadow_map_w       = 512;  // for focused (128, 64, 32)
+static int g_shadow_map_h       = 256;
 
 
 static const int g_shadow_preset_count = 5;
 // Resolution presets: {cube_size, focused_w, focused_h}
 static const int g_shadow_presets[][g_shadow_preset_count] = {
-    {512, 512, 256},  // superhot (not recommended — very slow)
-    {256, 256, 128},  // extreme (not recommended — very slow)
-    {128, 128, 64},   // high
-    {64,  64,  32},   // medium
-    {32,  32,  16},   // low
+    {1024, 1024, 512}, // nasa (hope you have a good CPU)
+    {512, 512, 256},   // superhot (not recommended — very slow)
+    {256, 256, 128},   // extreme (not recommended — very slow)
+    {128, 128, 64},    // high
+    {64,  64,  32},    // medium
+    {32,  32,  16},    // low
 };
 
 static int g_shadow_preset_idx = 0;  // start at high
@@ -455,9 +456,10 @@ static void light_compute(Vec3f world_pos, Vec3f normal,
 
         Vec3f light_dir = vec3f_scale(to_light, 1.0f / dist);
 
-        // Diffuse: N dot L (clamped to 0)
+        // Diffuse: N dot L — two-sided so thin planes are lit from both sides
         float ndotl = vec3f_dot(normal, light_dir);
-        if (ndotl <= 0.0f) continue;  // surface faces away from light
+        if (ndotl < 0.0f) ndotl = -ndotl;
+        if (ndotl <= 0.0f) continue;
 
         // Distance attenuation: smooth falloff where range is the effective radius
         float half_range = l->range * 0.5f;
@@ -582,8 +584,11 @@ static void light_cycle_shadow_resolution(void) {
 }
 
 static const char* light_get_shadow_resolution_str(void) {
-    if (g_shadow_preset_idx == 0) return "HIGH";
-    if (g_shadow_preset_idx == 1) return "MID";
+    if (g_shadow_preset_idx == 0) return "NASA";
+    if (g_shadow_preset_idx == 1) return "SUPERHOT";
+    if (g_shadow_preset_idx == 2) return "EXTREME";
+    if (g_shadow_preset_idx == 3) return "HIGH";
+    if (g_shadow_preset_idx == 4) return "MID";
     return "LOW";
 }
 
